@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\HealthScore.Application\HealthScore.Application.csproj" />
     <ProjectReference Include="..\..\src\HealthScore.Infrastructure\HealthScore.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\HealthScore.Api\HealthScore.Api.csproj" />
   </ItemGroup>
 
 </Project>

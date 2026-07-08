@@ -22,6 +22,12 @@ app.MapGet("/health/ready", async (HealthScoreDbContext db, CancellationToken ca
         ? Results.Ok(new { status = "ready" })
         : Results.Problem("MariaDB is unavailable", statusCode: 503)).AllowAnonymous();
 
+app.MapGet("/api/v1/auth/config", (IConfiguration configuration) =>
+{
+    var auth = configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+    return Results.Ok(new { mode = auth.Mode.ToLowerInvariant(), authority = auth.Authority, clientId = auth.ClientId, scope = auth.Scope });
+}).AllowAnonymous();
+
 app.MapGet("/api/v1/session", (ClaimsPrincipal user) => Results.Ok(new
 {
     user = user.Identity?.Name,
@@ -106,6 +112,55 @@ app.MapGet("/api/v1/risk-score/periods", async (HealthScoreDbContext db, Cancell
         .ToListAsync(cancellationToken);
     return Results.Ok(periods);
 });
+
+app.MapGet("/api/v1/risk-score/filters", async (FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
+    Results.Ok(await analytics.GetOptionsAsync(cancellationToken))).RequireAuthorization("Viewer");
+
+app.MapGet("/api/v1/risk-score/analysis", async (
+    string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
+    string? snapshotKind, DateOnly? periodStart, int? page, int? pageSize,
+    HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
+{
+    var period = await ResolvePeriodAsync(db, snapshotKind, periodStart, cancellationToken);
+    if (period is null) return Results.Ok(new { available = false, items = Array.Empty<object>() });
+    var configuration = InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson);
+    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), configuration, cancellationToken);
+    var snapshotIds = await db.GroupScoreSnapshots.AsNoTracking().Where(x => x.SnapshotKind == period.Value.Kind && x.PeriodStart == period.Value.Start && x.PeriodEndExclusive == period.Value.End && x.ScoreRuleVersionId == period.Value.Rule.Id)
+        .ToDictionaryAsync(x => x.EconomicGroup, x => x.Id, cancellationToken);
+    var rows = calculated.Select(x => x with { Id = snapshotIds.GetValueOrDefault(x.EconomicGroup) }).ToList();
+    var filtered = rows.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
+    if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+    var ranked = filtered.OrderByDescending(x => x.Score).ThenByDescending(x => x.TotalCases).ThenBy(x => x.EconomicGroup).ToList();
+    var safePage = Math.Max(page ?? 1, 1); var safePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+    var totalCases = rows.Sum(x => x.TotalCases); var criticalCases = rows.Where(x => x.RiskBand == "Crítico").Sum(x => x.TotalCases);
+    return Results.Ok(new
+    {
+        available = true, snapshotKind = period.Value.Kind, periodStart = period.Value.Start, periodEndExclusive = period.Value.End,
+        weights = configuration.Weights,
+        total = ranked.Count, page = safePage, pageSize = safePageSize, items = ranked.Skip((safePage - 1) * safePageSize).Take(safePageSize),
+        summary = new { available = true, snapshotKind = period.Value.Kind, periodStart = period.Value.Start, periodEndExclusive = period.Value.End,
+            totalGroups = rows.Count, criticalGroups = rows.Count(x => x.RiskBand == "Crítico"), highGroups = rows.Count(x => x.RiskBand == "Alto"),
+            averageScore = rows.Count == 0 ? 0 : rows.Average(x => (decimal)x.Score), totalCases, criticalCases,
+            criticalCaseShare = totalCases == 0 ? 0 : (decimal)criticalCases / totalCases }
+    });
+}).RequireAuthorization("Viewer");
+
+app.MapGet("/api/v1/risk-score/analysis/export", async (
+    string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
+    string? snapshotKind, DateOnly? periodStart, HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
+{
+    var period = await ResolvePeriodAsync(db, snapshotKind, periodStart, cancellationToken);
+    if (period is null) return Results.NotFound();
+    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken);
+    var filtered = rows.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
+    if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+    var csv = new StringBuilder("Grupo Econômico;Lojas Ativas;Chamados;Score;Faixa;Principal Motivo;Densidade vs Média;SLA Violado;FCR;Issue;Criticidade;Recorrência;Crescimento\r\n");
+    foreach (var row in filtered.OrderByDescending(x => x.Score).ThenBy(x => x.EconomicGroup))
+        csv.AppendJoin(';', Csv(row.EconomicGroup), row.ActiveStores, row.TotalCases, row.Score, Csv(row.RiskBand), Csv(row.MainReason), Csv(row.DensityVsAverage), Csv(row.SlaViolatedRate), Csv(row.FcrRate), Csv(row.IssueRate), Csv(row.CriticalRate), Csv(row.RecurrenceRate), Csv(row.RecentGrowthRate)).Append("\r\n");
+    return Results.File(new UTF8Encoding(true).GetBytes(csv.ToString()), "text/csv; charset=utf-8", $"healthscore-farma-filtrado-{period.Value.Start:yyyy-MM-dd}.csv");
+}).RequireAuthorization("Viewer");
 
 app.MapGet("/api/v1/risk-score/summary", async (
     string? snapshotKind, DateOnly? periodStart, HealthScoreDbContext db, CancellationToken cancellationToken) =>
@@ -311,7 +366,7 @@ app.MapGet("/api/v1/risk-score/groups/{id:long}/action-plan", async (long id, He
 });
 
 app.MapPut("/api/v1/risk-score/groups/{id:long}/action-plan", async (
-    long id, SaveActionPlanRequest request, HealthScoreDbContext db, CancellationToken cancellationToken) =>
+    long id, SaveActionPlanRequest request, ClaimsPrincipal user, HealthScoreDbContext db, CancellationToken cancellationToken) =>
 {
     var allowedStatuses = new[] { "not_started", "in_progress", "blocked", "completed" };
     if (!allowedStatuses.Contains(request.Status)) return Results.BadRequest(new { error = "Status inválido." });
@@ -342,7 +397,7 @@ app.MapPut("/api/v1/risk-score/groups/{id:long}/action-plan", async (
     db.ActionPlanEvents.Add(new HealthScore.Domain.ActionPlanEvent
     {
         ActionPlanId = plan.Id, EventType = eventType,
-        ChangedBy = string.IsNullOrWhiteSpace(request.ChangedBy) ? "local-user" : request.ChangedBy.Trim(),
+        ChangedBy = user.Identity?.Name ?? user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown-user",
         PayloadJson = JsonSerializer.Serialize(new { plan.Status, plan.Responsible, plan.Notes }, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
         CreatedAt = now
     });
@@ -388,7 +443,7 @@ app.MapPost("/api/v1/score-config/simulate", async (ScoreConfiguration proposed,
 }).RequireAuthorization("ScoreAdmin");
 
 app.MapPost("/api/v1/score-config/publish", async (
-    PublishScoreConfigurationRequest request, HealthScoreDbContext db, IAnalyticsService analytics, CancellationToken cancellationToken) =>
+    PublishScoreConfigurationRequest request, ClaimsPrincipal user, HealthScoreDbContext db, IAnalyticsService analytics, CancellationToken cancellationToken) =>
 {
     var validation = ValidateConfiguration(request.Configuration);
     if (validation is not null) return Results.BadRequest(new { error = validation });
@@ -401,7 +456,7 @@ app.MapPost("/api/v1/score-config/publish", async (
     {
         Name = string.IsNullOrWhiteSpace(request.Name) ? $"Regra publicada em {now:yyyy-MM-dd}" : request.Name.Trim(),
         Status = "published", ConfigurationJson = InitialScoreRules.AsJson(request.Configuration),
-        CreatedBy = string.IsNullOrWhiteSpace(request.CreatedBy) ? "local-admin" : request.CreatedBy.Trim(),
+        CreatedBy = user.Identity?.Name ?? user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown-user",
         Justification = request.Justification.Trim(), CreatedAt = now, PublishedAt = now
     };
     db.ScoreRuleVersions.Add(version);
@@ -453,6 +508,17 @@ static string Csv(object? value)
     var text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
     if (text.Length > 0 && "=+-@".Contains(text[0])) text = "'" + text;
     return '"' + text.Replace("\"", "\"\"") + '"';
+}
+
+static async Task<(DateOnly Start, DateOnly End, string Kind, HealthScore.Domain.ScoreRuleVersion Rule)?> ResolvePeriodAsync(
+    HealthScoreDbContext db, string? snapshotKind, DateOnly? periodStart, CancellationToken cancellationToken)
+{
+    var kind = NormalizeSnapshotKind(snapshotKind);
+    var rule = await db.ScoreRuleVersions.AsNoTracking().Where(x => x.Status == "published").OrderByDescending(x => x.Id).FirstAsync(cancellationToken);
+    var query = db.GroupScoreSnapshots.AsNoTracking().Where(x => x.SnapshotKind == kind && x.ScoreRuleVersionId == rule.Id);
+    if (periodStart.HasValue) query = query.Where(x => x.PeriodStart == periodStart.Value);
+    var selected = await query.OrderByDescending(x => x.PeriodEndExclusive).Select(x => new { x.PeriodStart, x.PeriodEndExclusive }).FirstOrDefaultAsync(cancellationToken);
+    return selected is null ? null : (selected.PeriodStart, selected.PeriodEndExclusive, kind, rule);
 }
 
 sealed record PublishScoreConfigurationRequest(string Name, string CreatedBy, string Justification, ScoreConfiguration Configuration);

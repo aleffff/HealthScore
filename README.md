@@ -56,6 +56,9 @@ URLs locais:
 - busca por grupo econômico;
 - filtro por faixa de risco;
 - filtro entre últimos 30 dias e competências mensais;
+- filtros de marca, produto, escopo/vertical e presença de Issue/JIRA;
+- recálculo do benchmark, crescimento, recorrência e score para cada recorte analítico;
+- cache de 10 minutos por combinação de filtros e índices dedicados no MariaDB;
 - exportação CSV compatível com Excel;
 - decomposição dos sete fatores do score;
 - evolução mensal;
@@ -81,7 +84,12 @@ URLs locais:
 ### Segurança
 
 - autenticação local automática para desenvolvimento;
-- suporte preparado para OIDC/JWT em produção;
+- login e logout OIDC no frontend usando Authorization Code com PKCE;
+- validação JWT de issuer, audience, assinatura e expiração na API;
+- envio automático do bearer token nas chamadas do dashboard;
+- mapeamento configurável de grupos corporativos para papéis da aplicação;
+- bloqueio de autenticação local quando o ambiente é `Production`;
+- identidade autenticada utilizada nos registros de auditoria;
 - papéis `Viewer`, `Operator`, `ScoreAdmin` e `SystemAdmin`;
 - políticas específicas para leitura, tratativas, calibragem e dados brutos;
 - segredos em `.env` ignorado pelo Git;
@@ -110,15 +118,6 @@ URLs locais:
 - fechar regras oficiais para grupos nulos, CNPJs duplicados e lojas inativas;
 - validar paridade completa com o Power BI usando um conjunto congelado de referência.
 
-### Filtros analíticos
-
-- marca;
-- produto;
-- escopo;
-- com ou sem Issue/JIRA;
-- benchmark recalculado corretamente para cada recorte;
-- comparação visual entre versões de regra.
-
 ### Salesforce
 
 - retry para `429` e `5xx` com backoff exponencial e jitter;
@@ -130,11 +129,16 @@ URLs locais:
 
 ### Segurança corporativa
 
-- definir o provedor OIDC oficial;
-- configurar Authority e Audience de produção;
-- implementar login e logout no frontend;
-- validar o mapeamento dos grupos corporativos para os papéis da aplicação;
-- desabilitar `AUTH_MODE=local` fora do ambiente de desenvolvimento.
+- definir no deploy o provedor OIDC oficial e seus valores de Authority, Audience e Client ID;
+- cadastrar no provedor as URLs de callback e logout do ambiente;
+- preencher os mapeamentos dos grupos corporativos reais para os papéis da aplicação;
+- validar o fluxo com usuários reais em homologação.
+
+### Dashboard e calibragem
+
+- implementar comparação visual entre versões de regra;
+- substituir os seletores extensos por busca/autocomplete caso a cardinalidade de marcas permaneça alta;
+- validar o tempo do primeiro cálculo de cada recorte sob carga de produção e, se necessário, materializar os recortes mais utilizados.
 
 ### Testes
 
@@ -164,8 +168,8 @@ URLs locais:
 1. Criar baseline de regressão Power BI versus HealthScore.
 2. Implementar testes de integração e contratos Salesforce.
 3. Tornar thresholds e janelas totalmente configuráveis.
-4. Implementar filtros de marca, produto, escopo e Issue/JIRA.
-5. Configurar OIDC corporativo.
+4. Implementar comparação visual entre versões de regra.
+5. Homologar o OIDC com o provedor e os grupos corporativos oficiais.
 6. Criar CI/CD, backup, restore e rollback.
 7. Executar homologação com usuários de Suporte, CS/ECS, Produto e P&D.
 
@@ -212,9 +216,28 @@ Nesse modo a API autentica como `local-admin`. Para produção:
 AUTH_MODE=oidc
 AUTH_AUTHORITY=https://provedor-corporativo/
 AUTH_AUDIENCE=healthscore-api
+AUTH_CLIENT_ID=healthscore-web
+AUTH_SCOPE=openid profile email healthscore-api
 ```
 
-O modo local não deve ser utilizado em produção.
+Cadastre no provedor OIDC:
+
+- callback: `https://seu-dominio/auth/callback`;
+- logout: `https://seu-dominio/`;
+- fluxo: Authorization Code com PKCE, sem client secret no frontend.
+
+O frontend obtém a configuração pública em `GET /api/v1/auth/config`, executa login/logout e envia o access token em todas as chamadas da API. A API valida issuer, audience, assinatura e expiração. O modo local é recusado automaticamente quando `ASPNETCORE_ENVIRONMENT=Production`.
+
+Papéis suportados: `Viewer`, `Operator`, `ScoreAdmin` e `SystemAdmin`. Claims de papéis podem ser consumidas diretamente, ou grupos corporativos podem ser mapeados por configuração:
+
+```text
+AUTH_GROUP_VIEWER=grupo-healthscore-leitura
+AUTH_GROUP_OPERATOR=grupo-healthscore-operacao
+AUTH_GROUP_SCORE_ADMIN=grupo-healthscore-score-admin
+AUTH_GROUP_SYSTEM_ADMIN=grupo-healthscore-system-admin
+```
+
+As alterações de tratativas e publicações de regras registram a identidade obtida do token; valores de usuário enviados pelo navegador não são usados para auditoria.
 
 ## Principais endpoints
 

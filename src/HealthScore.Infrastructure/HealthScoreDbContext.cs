@@ -57,6 +57,10 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.Property(x => x.TaxonomyDescription).HasMaxLength(1000);
             entity.HasIndex(x => x.AccountSalesforceId);
             entity.HasIndex(x => new { x.EconomicGroup, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.Brand, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.Product, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.OpeningVertical, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.JiraIssueCode, x.SalesforceCreatedAt });
         });
 
         modelBuilder.Entity<SyncWatermark>(entity =>

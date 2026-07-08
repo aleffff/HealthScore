@@ -22,6 +22,8 @@ public static class DependencyInjection
         services.AddHttpClient<ISalesforceClient, SalesforceClient>(client => client.Timeout = TimeSpan.FromMinutes(2));
         services.AddScoped<IFarmaSyncService, FarmaSyncService>();
         services.AddScoped<IAnalyticsService, AnalyticsService>();
+        services.AddMemoryCache();
+        services.AddScoped<FilteredAnalyticsService>();
         return services;
     }
 }

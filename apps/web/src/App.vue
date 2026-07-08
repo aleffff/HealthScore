@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { apiFetch, authenticatedUser, initializeAuth, isAuthenticated, login, logout } from './auth'
+
+const fetch = apiFetch
 
 type Summary = {
   available: boolean
@@ -24,7 +27,18 @@ type GroupRow = {
   slaViolatedRate: number
   fcrRate: number
   issueRate: number
+  criticalRate: number
   recurrenceRate: number
+  recentGrowthRate: number
+  density: number
+  averageDensity: number
+  densityPoints: number
+  growthPoints: number
+  slaPoints: number
+  fcrPoints: number
+  criticalPoints: number
+  issuePoints: number
+  recurrencePoints: number
   score: number
   riskBand: string
   mainReason: string
@@ -53,6 +67,7 @@ type ScoreConfiguration = {
 type Simulation = { groups: number; currentAverage: number; simulatedAverage: number; changedBands: number; distribution: Record<string, number> }
 type ActionPlanHistory = { id: number; eventType: string; changedBy: string; createdAt: string }
 type PeriodOption = { snapshotKind: string; periodStart: string; periodEndExclusive: string; groups: number }
+type FilterOptions = { brands: string[]; products: string[]; scopes: string[] }
 type OperationsOverview = {
   generatedAt: string
   ingestion: { accounts: number; cases: number; lastRuns: Array<{ id: number; entityName: string; status: string; startedAt: string; finishedAt?: string; recordsRead: number; recordsWritten: number; error?: string }> }
@@ -67,6 +82,12 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 25
 const riskBand = ref('')
+const brand = ref('')
+const product = ref('')
+const scope = ref('')
+const issue = ref('')
+const filterOptions = ref<FilterOptions>({ brands: [], products: [], scopes: [] })
+const analysisWeights = ref({ density: 25, growth: 15, sla: 15, fcr: 10, criticality: 15, issue: 10, recurrence: 10 })
 const search = ref('')
 const appliedSearch = ref('')
 const loading = ref(true)
@@ -95,6 +116,9 @@ const exporting = ref(false)
 const operationsOpen = ref(false)
 const operationsLoading = ref(false)
 const operations = ref<OperationsOverview | null>(null)
+const authReady = ref(false)
+const loggedIn = ref(false)
+const userName = ref('')
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const weightTotal = computed(() => draftConfig.value ? Object.values(draftConfig.value.weights).reduce((sum, value) => sum + Number(value), 0) : 0)
@@ -105,12 +129,23 @@ const periodLabel = computed(() => {
   const start = new Date(`${summary.value.periodStart}T00:00:00`)
   return `${formatDate(start)} — ${formatDate(end)}`
 })
+const hasAnalyticalFilter = computed(() => Boolean(brand.value || product.value || scope.value || issue.value))
 
 function periodParams() {
   const [snapshotKind, periodStart] = selectedPeriod.value.split(':')
   const params = new URLSearchParams({ snapshotKind })
   if (periodStart) params.set('periodStart', periodStart)
+  if (brand.value) params.set('brand', brand.value)
+  if (product.value) params.set('product', product.value)
+  if (scope.value) params.set('scope', scope.value)
+  if (issue.value) params.set('issue', issue.value)
   return params
+}
+
+async function loadFilterOptions() {
+  const response = await fetch('/api/v1/risk-score/filters')
+  if (!response.ok) throw new Error('Filtros analíticos indisponíveis.')
+  filterOptions.value = await response.json()
 }
 
 async function loadPeriods() {
@@ -121,13 +156,7 @@ async function loadPeriods() {
   if (rolling) selectedPeriod.value = `rolling30:${rolling.periodStart}`
 }
 
-async function loadSummary() {
-  const response = await fetch(`/api/v1/risk-score/summary?${periodParams()}`)
-  if (!response.ok) throw new Error('Não foi possível carregar o resumo.')
-  summary.value = await response.json()
-}
-
-async function loadGroups() {
+async function loadAnalysis() {
   loading.value = true
   error.value = ''
   try {
@@ -135,11 +164,21 @@ async function loadGroups() {
     params.set('page', String(page.value)); params.set('pageSize', String(pageSize))
     if (riskBand.value) params.set('riskBand', riskBand.value)
     if (appliedSearch.value) params.set('search', appliedSearch.value)
-    const response = await fetch(`/api/v1/risk-score/groups?${params}`)
-    if (!response.ok) throw new Error('Não foi possível carregar o ranking.')
-    const data = await response.json()
-    groups.value = data.items ?? []
-    total.value = data.total ?? 0
+    if (hasAnalyticalFilter.value) {
+      const response = await fetch(`/api/v1/risk-score/analysis?${params}`)
+      if (!response.ok) throw new Error('Não foi possível carregar a análise.')
+      const data = await response.json()
+      if (data.weights) analysisWeights.value = data.weights
+      summary.value = data.summary ?? null; groups.value = data.items ?? []; total.value = data.total ?? 0
+    } else {
+      const summaryParams = periodParams()
+      const [summaryResponse, groupsResponse] = await Promise.all([
+        fetch(`/api/v1/risk-score/summary?${summaryParams}`), fetch(`/api/v1/risk-score/groups?${params}`),
+      ])
+      if (!summaryResponse.ok || !groupsResponse.ok) throw new Error('Não foi possível carregar a análise.')
+      summary.value = await summaryResponse.json()
+      const data = await groupsResponse.json(); groups.value = data.items ?? []; total.value = data.total ?? 0
+    }
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Erro inesperado.'
   } finally {
@@ -150,7 +189,7 @@ async function loadGroups() {
 async function changePeriod() {
   page.value = 1
   selected.value = null
-  await Promise.all([loadSummary(), loadGroups()])
+  await loadAnalysis()
 }
 
 async function exportRanking() {
@@ -159,7 +198,8 @@ async function exportRanking() {
     const params = periodParams()
     if (riskBand.value) params.set('riskBand', riskBand.value)
     if (appliedSearch.value) params.set('search', appliedSearch.value)
-    const response = await fetch(`/api/v1/risk-score/groups/export?${params}`)
+    const endpoint = hasAnalyticalFilter.value ? '/api/v1/risk-score/analysis/export' : '/api/v1/risk-score/groups/export'
+    const response = await fetch(`${endpoint}?${params}`)
     if (!response.ok) throw new Error('Exportação indisponível.')
     const blob = await response.blob()
     const url = URL.createObjectURL(blob)
@@ -194,7 +234,7 @@ function runStatusLabel(status: string) {
 function applySearch() {
   page.value = 1
   appliedSearch.value = search.value.trim()
-  loadGroups()
+  loadAnalysis()
 }
 
 async function openDetail(id: number) {
@@ -209,6 +249,28 @@ async function openDetail(id: number) {
   actionHistory.value = []
   actionMessage.value = ''
   try {
+    if (hasAnalyticalFilter.value) {
+      const row = groups.value.find(item => item.id === id)
+      if (!row) throw new Error('Detalhe indisponível.')
+      selected.value = {
+        ...row,
+        periodStart: summary.value?.periodStart ?? '', periodEndExclusive: summary.value?.periodEndExclusive ?? '',
+        metrics: { activeStores: row.activeStores, totalCases: row.totalCases, density: row.density, averageDensity: row.averageDensity, densityVsAverage: row.densityVsAverage, slaViolatedRate: row.slaViolatedRate, fcrRate: row.fcrRate, issueRate: row.issueRate, criticalRate: row.criticalRate, recurrenceRate: row.recurrenceRate, recentGrowthRate: row.recentGrowthRate },
+        factors: [
+          { name: 'Densidade', points: row.densityPoints, maximum: analysisWeights.value.density }, { name: 'Crescimento', points: row.growthPoints, maximum: analysisWeights.value.growth },
+          { name: 'SLA', points: row.slaPoints, maximum: analysisWeights.value.sla }, { name: 'FCR', points: row.fcrPoints, maximum: analysisWeights.value.fcr },
+          { name: 'Criticidade', points: row.criticalPoints, maximum: analysisWeights.value.criticality }, { name: 'Issue/JIRA', points: row.issuePoints, maximum: analysisWeights.value.issue },
+          { name: 'Recorrência', points: row.recurrencePoints, maximum: analysisWeights.value.recurrence },
+        ],
+        scoreRuleVersionId: 0, calculatedAt: new Date().toISOString(), suggestedAction: `Priorizar análise do fator: ${row.mainReason}.`,
+      }
+      const actionResponse = await fetch(`/api/v1/risk-score/groups/${id}/action-plan`)
+      if (actionResponse.ok) {
+        const actionData = await actionResponse.json()
+        actionStatus.value = actionData.plan?.status ?? 'not_started'; actionResponsible.value = actionData.plan?.responsible ?? ''; actionNotes.value = actionData.plan?.notes ?? ''; actionHistory.value = actionData.history ?? []
+      }
+      return
+    }
     const [detailResponse, evolutionResponse, accountsResponse, taxonomyResponse, actionResponse] = await Promise.all([
       fetch(`/api/v1/risk-score/groups/${id}`), fetch(`/api/v1/risk-score/groups/${id}/evolution`),
       fetch(`/api/v1/risk-score/groups/${id}/accounts`), fetch(`/api/v1/risk-score/groups/${id}/taxonomy`),
@@ -253,7 +315,7 @@ async function saveActionPlan() {
 
 function changePage(value: number) {
   page.value = Math.min(Math.max(value, 1), totalPages.value)
-  loadGroups()
+  loadAnalysis()
   window.scrollTo({ top: 300, behavior: 'smooth' })
 }
 
@@ -322,7 +384,7 @@ async function publishCalibration() {
     if (!response.ok) throw new Error(data.error ?? 'Não foi possível publicar.')
     calibrationOpen.value = false
     justification.value = ''
-    await Promise.all([loadSummary(), loadGroups()])
+    await loadAnalysis()
   } catch (reason) {
     calibrationError.value = reason instanceof Error ? reason.message : 'Erro inesperado.'
   } finally {
@@ -332,13 +394,24 @@ async function publishCalibration() {
 
 watch(riskBand, () => {
   page.value = 1
-  loadGroups()
+  loadAnalysis()
+})
+
+watch([brand, product, scope, issue], () => {
+  page.value = 1
+  selected.value = null
+  loadAnalysis()
 })
 
 onMounted(async () => {
   try {
-    await loadPeriods()
-    await Promise.all([loadSummary(), loadGroups()])
+    await initializeAuth()
+    authReady.value = true
+    loggedIn.value = isAuthenticated()
+    userName.value = authenticatedUser()?.name ?? 'local-admin'
+    if (!loggedIn.value) return
+    await Promise.all([loadPeriods(), loadFilterOptions()])
+    await loadAnalysis()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Erro inesperado.'
   }
@@ -346,7 +419,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="!authReady" class="auth-screen">Carregando autenticação…</div>
+  <div v-else-if="!loggedIn" class="auth-screen"><h1>HealthScore</h1><p>Entre com sua conta corporativa para continuar.</p><button @click="login">Entrar</button></div>
+  <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand-mark">HS</div>
       <div class="brand-copy">
@@ -355,6 +430,8 @@ onMounted(async () => {
       </div>
       <button class="operations-link" @click="openOperations">Operação</button>
       <button class="calibration-link" @click="openCalibration">Calibragem</button>
+      <span class="user-name">{{ userName }}</span>
+      <button class="logout-link" @click="logout">Sair</button>
       <div class="scope-pill"><span></span> Vertical FARMA</div>
     </header>
 
@@ -424,6 +501,22 @@ onMounted(async () => {
               <option>Atenção</option>
               <option>Baixo</option>
             </select>
+          </label>
+          <label>
+            <span>Marca</span>
+            <select v-model="brand"><option value="">Todas</option><option v-for="item in filterOptions.brands" :key="item">{{ item }}</option></select>
+          </label>
+          <label>
+            <span>Produto</span>
+            <select v-model="product"><option value="">Todos</option><option v-for="item in filterOptions.products" :key="item">{{ item }}</option></select>
+          </label>
+          <label>
+            <span>Escopo / vertical</span>
+            <select v-model="scope"><option value="">Todos</option><option v-for="item in filterOptions.scopes" :key="item">{{ item }}</option></select>
+          </label>
+          <label>
+            <span>Issue/JIRA</span>
+            <select v-model="issue"><option value="">Todos</option><option value="with">Com issue</option><option value="without">Sem issue</option></select>
           </label>
         </div>
 

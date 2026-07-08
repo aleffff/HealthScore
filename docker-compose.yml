@@ -33,6 +33,14 @@ services:
       Auth__Mode: ${AUTH_MODE:-local}
       Auth__Authority: ${AUTH_AUTHORITY:-}
       Auth__Audience: ${AUTH_AUDIENCE:-}
+      Auth__ClientId: ${AUTH_CLIENT_ID:-}
+      Auth__Scope: ${AUTH_SCOPE:-openid profile email healthscore-api}
+      Auth__RolesClaim: ${AUTH_ROLES_CLAIM:-roles}
+      Auth__GroupsClaim: ${AUTH_GROUPS_CLAIM:-groups}
+      Auth__RoleMappings__Viewer__0: ${AUTH_GROUP_VIEWER:-}
+      Auth__RoleMappings__Operator__0: ${AUTH_GROUP_OPERATOR:-}
+      Auth__RoleMappings__ScoreAdmin__0: ${AUTH_GROUP_SCORE_ADMIN:-}
+      Auth__RoleMappings__SystemAdmin__0: ${AUTH_GROUP_SYSTEM_ADMIN:-}
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +52,7 @@ services:
       dockerfile: src/HealthScore.Api/Dockerfile
     environment:
       <<: *app_environment
-      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

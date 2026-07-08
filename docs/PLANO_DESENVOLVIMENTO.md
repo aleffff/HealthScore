@@ -230,7 +230,32 @@ Requisitos operacionais:
 - Frontend: componentes críticos e fluxos com Vitest; E2E com Playwright.
 - Regressão: conjunto congelado comparando resultados do Power BI e do novo motor antes do go-live.
 
-## 13. Fases e critérios de saída
+## 13. Status de implementação em 2026-07-08
+
+Concluído:
+
+- monorepo, Docker Compose, API .NET 8, Worker, Vue 3 e MariaDB;
+- autenticação Salesforce, carga inicial, sincronização incremental, watermarks e auditoria de execuções;
+- motor de score, snapshots móveis e mensais, ranking, resumo, drill-down e planos de ação;
+- calibragem com simulação, publicação versionada e recálculo;
+- autenticação OIDC/JWT, PKCE no frontend, autorização por papéis e auditoria pelo usuário autenticado;
+- filtros de marca, produto, escopo/vertical e Issue/JIRA com recálculo do benchmark e exportação;
+- cache dos recortes analíticos, índices de consulta e testes unitários do motor, filtros e segurança.
+
+Parcial:
+
+- ingestão não trata ainda exclusões, saída da vertical, dead-letter ou Bulk API;
+- thresholds e janelas ainda não são integralmente configuráveis;
+- OIDC está implementado, mas depende da homologação com o provedor e grupos corporativos oficiais;
+- cobertura automatizada ainda não inclui MariaDB real, Salesforce simulado, endpoints e testes E2E.
+
+Pendente:
+
+- baseline e regressão automática contra o Power BI;
+- comparação visual entre versões de regra;
+- CI/CD, homologação, registry, secret manager, TLS, backup, restore, observabilidade externa e rollback testado.
+
+## 14. Fases e critérios de saída
 
 ### Fase 0 — Descoberta e contrato de dados
 
@@ -273,33 +298,36 @@ Saída: mudança de regra auditável sem alteração de código.
 
 Saída: SLOs aprovados, rollback testado e operação treinada.
 
-## 14. Backlog inicial priorizado
+## 15. Backlog inicial priorizado
 
-1. Mapear campos reais de `Account` e `Case` com `describe` e consultas de amostra.
-2. Fechar as decisões pendentes de fórmula e qualidade de dados.
-3. Criar solution .NET, aplicação Vue e Docker Compose.
-4. Implementar autenticação/configuração segura Salesforce.
-5. Criar schema e migrations de integração/auditoria.
-6. Implementar sincronização incremental de contas e chamados.
-7. Materializar grupos e calendário.
-8. Implementar motor de score puro e testes de regressão.
-9. Criar snapshots e endpoints de ranking/summary.
-10. Construir dashboard e filtros.
-11. Implementar drill-down, recorrência e ações.
-12. Implementar calibragem, simulação e publicação.
+1. [x] Mapear os campos utilizados de `Account` e `Case` e validar consultas no Salesforce.
+2. [ ] Fechar as decisões pendentes de fórmula e qualidade de dados.
+3. [x] Criar solution .NET, aplicação Vue e Docker Compose.
+4. [x] Implementar autenticação/configuração segura Salesforce.
+5. [x] Criar schema e migrations de integração/auditoria.
+6. [x] Implementar sincronização incremental de contas e chamados.
+7. [x] Materializar grupos e calendário base.
+8. [ ] Implementar motor de score puro — parcial; falta regressão contra o Power BI.
+9. [x] Criar snapshots e endpoints de ranking/summary.
+10. [x] Construir dashboard e filtros analíticos.
+11. [x] Implementar drill-down, recorrência e ações.
+12. [ ] Implementar calibragem, simulação e publicação — parcial; falta comparação visual entre versões.
+13. [x] Implementar OIDC/JWT, login/logout, papéis e auditoria autenticada.
+14. [ ] Criar testes de integração, contratos Salesforce e testes E2E.
+15. [ ] Criar pipeline de entrega, backup, restore, observabilidade e rollback.
 
-## 15. Decisões necessárias antes da Fase 1
+## 16. Decisões e configurações ainda necessárias
 
 - Provedor de identidade corporativo e grupos que mapeiam para cada papel.
 - Campo oficial de conta ativa e regra de deduplicação de CNPJ.
 - Tratamento de `GrupoEconomico__c` nulo.
-- Nomes reais dos campos SLA, FCR, JIRA, taxonomia, produto, vertical e escopo.
+- confirmar se haverá um campo corporativo específico de escopo; atualmente o filtro usa a vertical de abertura, pois o `describe` de `Case` não retornou campo de escopo;
 - Semântica exata do crescimento de 30/90 dias.
 - Calendário de feriados.
-- Benchmark ao aplicar filtros de marca/produto/vertical.
+- o benchmark filtrado foi definido como a média de densidade dos grupos elegíveis no próprio recorte;
 - Política para recalcular histórico após publicar nova regra.
 - Meta de atualização e SLOs de página/job.
 
-## 16. Definition of Done transversal
+## 17. Definition of Done transversal
 
 Uma entrega só está concluída quando possui migration reversível ou compatível, testes automatizados, logs e métricas, documentação do contrato, controle de acesso, nenhuma credencial versionada e procedimento de rollback validado.
