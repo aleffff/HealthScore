@@ -11,6 +11,8 @@ public sealed class FarmaSalesforceQueriesTests
 
         Assert.Contains("Vertical__c = 'FARMA'", query, StringComparison.Ordinal);
         Assert.Contains("SystemModstamp > 2026-07-01T12:00:00Z", query, StringComparison.Ordinal);
+        Assert.Contains("ParentId", query, StringComparison.Ordinal);
+        Assert.Contains("Parent.Name", query, StringComparison.Ordinal);
     }
 
     [Fact]

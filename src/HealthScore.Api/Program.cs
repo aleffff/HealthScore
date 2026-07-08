@@ -49,6 +49,9 @@ app.MapGet("/api/v1/operations/overview", async (HealthScoreDbContext db, Cancel
     var cases = await db.Cases.AsNoTracking().CountAsync(cancellationToken);
     var accountsWithoutGroup = await db.Accounts.AsNoTracking().CountAsync(x => x.EconomicGroup == null || x.EconomicGroup == "", cancellationToken);
     var accountsWithoutCnpj = await db.Accounts.AsNoTracking().CountAsync(x => x.Cnpj == null || x.Cnpj == "", cancellationToken);
+    var accountsWithParent = await db.Accounts.AsNoTracking().CountAsync(x => x.ParentSalesforceId != null && x.ParentSalesforceId != "", cancellationToken);
+    var accountsWithValidCnpjRoot = await db.Accounts.AsNoTracking().CountAsync(x => x.CnpjRoot != null && x.CnpjRoot != "", cancellationToken);
+    var resolvedGroups = await db.Accounts.AsNoTracking().Select(x => x.EconomicGroup).Distinct().CountAsync(cancellationToken);
     var casesWithoutGroup = await db.Cases.AsNoTracking().CountAsync(x => x.EconomicGroup == null || x.EconomicGroup == "", cancellationToken);
     var lastRuns = await db.SyncRuns.AsNoTracking().GroupBy(x => x.EntityName)
         .Select(group => group.OrderByDescending(x => x.StartedAt).First())
@@ -68,7 +71,7 @@ app.MapGet("/api/v1/operations/overview", async (HealthScoreDbContext db, Cancel
         ingestion = new { accounts, cases, lastRuns },
         quality = new
         {
-            accountsWithoutGroup, accountsWithoutCnpj, casesWithoutGroup,
+            accountsWithoutGroup, accountsWithoutCnpj, casesWithoutGroup, accountsWithParent, accountsWithValidCnpjRoot, resolvedGroups,
             accountsWithoutGroupRate = accounts == 0 ? 0 : (decimal)accountsWithoutGroup / accounts,
             accountsWithoutCnpjRate = accounts == 0 ? 0 : (decimal)accountsWithoutCnpj / accounts,
             casesWithoutGroupRate = cases == 0 ? 0 : (decimal)casesWithoutGroup / cases
@@ -158,7 +161,7 @@ app.MapGet("/api/v1/risk-score/analysis/export", async (
     if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
     var csv = new StringBuilder("Grupo Econômico;Lojas Ativas;Chamados;Score;Faixa;Principal Motivo;Densidade vs Média;SLA Violado;FCR;Issue;Criticidade;Recorrência;Crescimento\r\n");
     foreach (var row in filtered.OrderByDescending(x => x.Score).ThenBy(x => x.EconomicGroup))
-        csv.AppendJoin(';', Csv(row.EconomicGroup), row.ActiveStores, row.TotalCases, row.Score, Csv(row.RiskBand), Csv(row.MainReason), Csv(row.DensityVsAverage), Csv(row.SlaViolatedRate), Csv(row.FcrRate), Csv(row.IssueRate), Csv(row.CriticalRate), Csv(row.RecurrenceRate), Csv(row.RecentGrowthRate)).Append("\r\n");
+        csv.AppendJoin(';', Csv(DisplayGroup(row.EconomicGroup)), row.ActiveStores, row.TotalCases, row.Score, Csv(row.RiskBand), Csv(row.MainReason), Csv(row.DensityVsAverage), Csv(row.SlaViolatedRate), Csv(row.FcrRate), Csv(row.IssueRate), Csv(row.CriticalRate), Csv(row.RecurrenceRate), Csv(row.RecentGrowthRate)).Append("\r\n");
     return Results.File(new UTF8Encoding(true).GetBytes(csv.ToString()), "text/csv; charset=utf-8", $"healthscore-farma-filtrado-{period.Value.Start:yyyy-MM-dd}.csv");
 }).RequireAuthorization("Viewer");
 
@@ -230,7 +233,7 @@ app.MapGet("/api/v1/risk-score/groups/export", async (
     var csv = new StringBuilder("Grupo Econômico;Lojas Ativas;Chamados;Score;Faixa;Principal Motivo;Densidade vs Média;SLA Violado;FCR;Issue;Criticidade;Recorrência;Crescimento\r\n");
     foreach (var row in rows)
     {
-        csv.AppendJoin(';', Csv(row.EconomicGroup), row.ActiveStores, row.TotalCases, row.Score, Csv(row.RiskBand), Csv(row.MainReason),
+        csv.AppendJoin(';', Csv(DisplayGroup(row.EconomicGroup)), row.ActiveStores, row.TotalCases, row.Score, Csv(row.RiskBand), Csv(row.MainReason),
             Csv(row.DensityVsAverage), Csv(row.SlaViolatedRate), Csv(row.FcrRate), Csv(row.IssueRate),
             Csv(row.CriticalRate), Csv(row.RecurrenceRate), Csv(row.RecentGrowthRate)).Append("\r\n");
     }
@@ -509,6 +512,7 @@ static string Csv(object? value)
     if (text.Length > 0 && "=+-@".Contains(text[0])) text = "'" + text;
     return '"' + text.Replace("\"", "\"\"") + '"';
 }
+static string DisplayGroup(string value) => System.Text.RegularExpressions.Regex.Replace(value, @" \[(?:P|C|A):[^\]]+\]$", string.Empty);
 
 static async Task<(DateOnly Start, DateOnly End, string Kind, HealthScore.Domain.ScoreRuleVersion Rule)?> ResolvePeriodAsync(
     HealthScoreDbContext db, string? snapshotKind, DateOnly? periodStart, CancellationToken cancellationToken)

@@ -8,7 +8,7 @@ public static class FarmaSalesforceQueries
     {
         var incrementalFilter = since.HasValue ? $" AND SystemModstamp > {Format(since.Value)}" : string.Empty;
         return $"""
-        SELECT Id, Name, CpfCnpj__c, GrupoEconomico__c, Marca__c, Vertical__c, Status__c,
+        SELECT Id, Name, ParentId, Parent.Name, CpfCnpj__c, GrupoEconomico__c, Marca__c, Vertical__c, Status__c,
                CreatedDate, SystemModstamp
         FROM Account
         WHERE Vertical__c = 'FARMA'{incrementalFilter}

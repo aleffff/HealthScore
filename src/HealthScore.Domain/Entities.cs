@@ -6,6 +6,10 @@ public sealed class AccountRecord
     public required string SalesforceId { get; set; }
     public required string Name { get; set; }
     public string? Cnpj { get; set; }
+    public string? CnpjRoot { get; set; }
+    public string? ParentSalesforceId { get; set; }
+    public string? ParentName { get; set; }
+    public string? ReportedEconomicGroup { get; set; }
     public string? EconomicGroup { get; set; }
     public string? Brand { get; set; }
     public required string Vertical { get; set; }
@@ -21,6 +25,7 @@ public sealed class CaseRecord
     public required string SalesforceId { get; set; }
     public required string CaseNumber { get; set; }
     public string? AccountSalesforceId { get; set; }
+    public string? ReportedEconomicGroup { get; set; }
     public string? EconomicGroup { get; set; }
     public string? Brand { get; set; }
     public string? Status { get; set; }

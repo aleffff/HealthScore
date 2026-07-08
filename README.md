@@ -36,6 +36,10 @@ URLs locais:
 
 ### Motor analítico
 
+- grupos reais de lojas resolvidos pela união transitiva de `ParentId` compartilhado e raiz dos CNPJs válidos;
+- validação dos dígitos verificadores do CNPJ antes de utilizar sua raiz de oito dígitos;
+- grupo informado pelo Salesforce preservado separadamente para auditoria e nomeação;
+- chamados reassociados ao grupo resolvido por meio do `AccountId`;
 - grupos econômicos e quantidade materializada de lojas ativas;
 - calendário de dias úteis de segunda a sexta;
 - densidade por grupo e benchmark médio da carteira;
@@ -103,6 +107,7 @@ URLs locais:
 - contagem de registros processados;
 - visão das últimas sincronizações;
 - indicadores de contas sem grupo, contas sem CNPJ e chamados sem grupo;
+- indicadores de cobertura por conta pai, raiz de CNPJ válida e total de grupos resolvidos;
 - imagens Docker multi-stage;
 - volume persistente para o MariaDB.
 

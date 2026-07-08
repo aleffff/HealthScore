@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace HealthScore.Infrastructure;
 
-public sealed class AnalyticsService(HealthScoreDbContext db, ILogger<AnalyticsService> logger) : IAnalyticsService
+public sealed class AnalyticsService(HealthScoreDbContext db, AccountGroupResolver groupResolver, ILogger<AnalyticsService> logger) : IAnalyticsService
 {
     private static readonly HashSet<string> CriticalPriorities = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -18,6 +18,7 @@ public sealed class AnalyticsService(HealthScoreDbContext db, ILogger<AnalyticsS
         var ruleVersion = await db.ScoreRuleVersions.AsNoTracking()
             .Where(x => x.Status == "published").OrderByDescending(x => x.Id).FirstAsync(cancellationToken);
         var configuration = InitialScoreRules.Parse(ruleVersion.ConfigurationJson);
+        await groupResolver.ResolveAsync(cancellationToken);
         await EnsureCalendarAsync(cancellationToken);
         var groups = await RebuildGroupsAsync(cancellationToken);
 

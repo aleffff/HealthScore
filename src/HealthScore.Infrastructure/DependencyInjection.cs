@@ -18,10 +18,12 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddOptions<SyncOptions>().Bind(configuration.GetSection(SyncOptions.SectionName));
         services.AddDbContext<HealthScoreDbContext>(options =>
-            options.UseMySql(connectionString, new MariaDbServerVersion(new Version(11, 4, 0))));
+            options.UseMySql(connectionString, new MariaDbServerVersion(new Version(11, 4, 0)),
+                mariaDb => mariaDb.CommandTimeout(180)));
         services.AddHttpClient<ISalesforceClient, SalesforceClient>(client => client.Timeout = TimeSpan.FromMinutes(2));
         services.AddScoped<IFarmaSyncService, FarmaSyncService>();
         services.AddScoped<IAnalyticsService, AnalyticsService>();
+        services.AddScoped<AccountGroupResolver>();
         services.AddMemoryCache();
         services.AddScoped<FilteredAnalyticsService>();
         return services;

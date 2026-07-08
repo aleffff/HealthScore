@@ -187,6 +187,9 @@ public sealed class FarmaSyncService(
         SalesforceId = GetString(record, "Id")!,
         Name = GetString(record, "Name") ?? "",
         Cnpj = NormalizeCnpj(GetString(record, "CpfCnpj__c")),
+        ParentSalesforceId = Clean(GetString(record, "ParentId")),
+        ParentName = Clean(GetNestedString(record, "Parent", "Name")),
+        ReportedEconomicGroup = Clean(GetString(record, "GrupoEconomico__c")),
         EconomicGroup = Clean(GetString(record, "GrupoEconomico__c")),
         Brand = Clean(GetString(record, "Marca__c")),
         Vertical = GetString(record, "Vertical__c") ?? "FARMA",
@@ -202,6 +205,7 @@ public sealed class FarmaSyncService(
         SalesforceId = GetString(record, "Id")!,
         CaseNumber = GetString(record, "CaseNumber") ?? "",
         AccountSalesforceId = GetString(record, "AccountId"),
+        ReportedEconomicGroup = Clean(GetString(record, "GrupoEconomico__c")),
         EconomicGroup = Clean(GetString(record, "GrupoEconomico__c")),
         Brand = Clean(GetString(record, "Marca__c")),
         Status = Clean(GetString(record, "Status")),
@@ -224,6 +228,8 @@ public sealed class FarmaSyncService(
     };
 
     private static string? GetString(JsonElement record, string property) => record.TryGetProperty(property, out var value) && value.ValueKind != JsonValueKind.Null ? value.GetString() : null;
+    private static string? GetNestedString(JsonElement record, string parent, string property) =>
+        record.TryGetProperty(parent, out var nested) && nested.ValueKind == JsonValueKind.Object ? GetString(nested, property) : null;
     private static bool? GetBoolean(JsonElement record, string property) => record.TryGetProperty(property, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False ? value.GetBoolean() : null;
     private static DateTime GetDateTime(JsonElement record, string property) => DateTime.Parse(GetString(record, property)!, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
     private static DateTime? GetNullableDateTime(JsonElement record, string property) => GetString(record, property) is { } value ? DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal) : null;

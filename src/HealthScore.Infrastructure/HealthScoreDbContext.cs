@@ -26,12 +26,18 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.HasIndex(x => x.SalesforceId).IsUnique();
             entity.Property(x => x.Name).HasMaxLength(255).IsRequired();
             entity.Property(x => x.Cnpj).HasMaxLength(14);
+            entity.Property(x => x.CnpjRoot).HasMaxLength(8);
+            entity.Property(x => x.ParentSalesforceId).HasMaxLength(18);
+            entity.Property(x => x.ParentName).HasMaxLength(255);
+            entity.Property(x => x.ReportedEconomicGroup).HasMaxLength(255);
             entity.Property(x => x.EconomicGroup).HasMaxLength(255);
             entity.Property(x => x.Brand).HasMaxLength(255);
             entity.Property(x => x.Vertical).HasMaxLength(50).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(100);
             entity.HasIndex(x => x.EconomicGroup);
             entity.HasIndex(x => x.Cnpj);
+            entity.HasIndex(x => x.CnpjRoot);
+            entity.HasIndex(x => x.ParentSalesforceId);
         });
 
         modelBuilder.Entity<CaseRecord>(entity =>
@@ -42,6 +48,7 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.HasIndex(x => x.SalesforceId).IsUnique();
             entity.Property(x => x.CaseNumber).HasMaxLength(30).IsRequired();
             entity.Property(x => x.AccountSalesforceId).HasMaxLength(18);
+            entity.Property(x => x.ReportedEconomicGroup).HasMaxLength(255);
             entity.Property(x => x.EconomicGroup).HasMaxLength(255);
             entity.Property(x => x.Brand).HasMaxLength(255);
             entity.Property(x => x.Status).HasMaxLength(100);

@@ -240,6 +240,7 @@ Concluído:
 - calibragem com simulação, publicação versionada e recálculo;
 - autenticação OIDC/JWT, PKCE no frontend, autorização por papéis e auditoria pelo usuário autenticado;
 - filtros de marca, produto, escopo/vertical e Issue/JIRA com recálculo do benchmark e exportação;
+- identidade real de grupos por união de conta pai e raiz de CNPJ validado, com rastreabilidade do grupo originalmente reportado;
 - cache dos recortes analíticos, índices de consulta e testes unitários do motor, filtros e segurança.
 
 Parcial:
@@ -319,7 +320,7 @@ Saída: SLOs aprovados, rollback testado e operação treinada.
 ## 16. Decisões e configurações ainda necessárias
 
 - Provedor de identidade corporativo e grupos que mapeiam para cada papel.
-- Campo oficial de conta ativa e regra de deduplicação de CNPJ.
+- confirmar o campo oficial de conta ativa; a deduplicação usa CNPJ válido e raiz de oito dígitos;
 - Tratamento de `GrupoEconomico__c` nulo.
 - confirmar se haverá um campo corporativo específico de escopo; atualmente o filtro usa a vertical de abertura, pois o `describe` de `Case` não retornou campo de escopo;
 - Semântica exata do crescimento de 30/90 dias.

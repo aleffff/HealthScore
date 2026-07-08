@@ -71,7 +71,7 @@ type FilterOptions = { brands: string[]; products: string[]; scopes: string[] }
 type OperationsOverview = {
   generatedAt: string
   ingestion: { accounts: number; cases: number; lastRuns: Array<{ id: number; entityName: string; status: string; startedAt: string; finishedAt?: string; recordsRead: number; recordsWritten: number; error?: string }> }
-  quality: { accountsWithoutGroup: number; accountsWithoutCnpj: number; casesWithoutGroup: number; accountsWithoutGroupRate: number; accountsWithoutCnpjRate: number; casesWithoutGroupRate: number }
+  quality: { accountsWithoutGroup: number; accountsWithoutCnpj: number; casesWithoutGroup: number; accountsWithParent: number; accountsWithValidCnpjRoot: number; resolvedGroups: number; accountsWithoutGroupRate: number; accountsWithoutCnpjRate: number; casesWithoutGroupRate: number }
   analytics: { lastSnapshot?: string; snapshotGroups: number; activeRule: { version: number; name: string; publishedAt: string; createdBy: string } }
   actionPlans: Array<{ status: string; total: number }>
 }
@@ -338,6 +338,10 @@ function integer(value: number) {
   return value.toLocaleString('pt-BR')
 }
 
+function displayGroup(value: string) {
+  return value.replace(/ \[(?:P|C|A):[^\]]+\]$/, '')
+}
+
 function formatDate(value: Date) {
   return value.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
 }
@@ -532,7 +536,7 @@ onMounted(async () => {
             <tbody>
               <tr v-if="loading" v-for="index in 6" :key="index" class="skeleton-row"><td colspan="9"><span></span></td></tr>
               <tr v-else v-for="group in groups" :key="group.id">
-                <td><strong>{{ group.economicGroup }}</strong><small>{{ group.activeStores }} lojas ativas</small></td>
+                <td><strong>{{ displayGroup(group.economicGroup) }}</strong><small>{{ group.activeStores }} lojas ativas</small></td>
                 <td><span class="score" :class="scoreClass(group.score)">{{ group.score }}</span></td>
                 <td><span class="band" :class="scoreClass(group.score)">{{ group.riskBand }}</span></td>
                 <td>{{ group.mainReason }}</td><td>{{ integer(group.totalCases) }}</td>
@@ -557,7 +561,7 @@ onMounted(async () => {
         <template v-else-if="selected">
           <button class="close" @click="selected = null" aria-label="Fechar">×</button>
           <p class="eyebrow">DIAGNÓSTICO DO GRUPO</p>
-          <h2>{{ selected.economicGroup }}</h2>
+          <h2>{{ displayGroup(selected.economicGroup) }}</h2>
           <div class="drawer-score"><span class="score large" :class="scoreClass(selected.score)">{{ selected.score }}</span><div><strong>{{ selected.riskBand }}</strong><small>Principal motivo: {{ selected.mainReason }}</small></div></div>
           <div class="action-callout"><span>Ação sugerida</span><p>{{ selected.suggestedAction }}</p></div>
           <div class="action-plan-form">
@@ -682,6 +686,9 @@ onMounted(async () => {
           </div>
           <h3>Qualidade dos dados</h3>
           <div class="quality-list">
+            <div><span>Grupos resolvidos</span><strong>{{ integer(operations.quality.resolvedGroups) }}</strong><small>Conta pai + raiz CNPJ</small></div>
+            <div><span>Contas com conta pai</span><strong>{{ integer(operations.quality.accountsWithParent) }}</strong><small>ParentId preenchido</small></div>
+            <div><span>Contas com raiz CNPJ válida</span><strong>{{ integer(operations.quality.accountsWithValidCnpjRoot) }}</strong><small>CNPJ validado</small></div>
             <div><span>Contas sem grupo econômico</span><strong>{{ integer(operations.quality.accountsWithoutGroup) }}</strong><small>{{ pct(operations.quality.accountsWithoutGroupRate) }}</small></div>
             <div><span>Contas sem CNPJ</span><strong>{{ integer(operations.quality.accountsWithoutCnpj) }}</strong><small>{{ pct(operations.quality.accountsWithoutCnpjRate) }}</small></div>
             <div><span>Chamados sem grupo</span><strong>{{ integer(operations.quality.casesWithoutGroup) }}</strong><small>{{ pct(operations.quality.casesWithoutGroupRate) }}</small></div>
