@@ -39,23 +39,27 @@ public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCac
     }
 
     public Task<IReadOnlyList<FilteredScoreRow>> CalculateAsync(
-        DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken)
+        DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken,
+        TimeZoneInfo? timeZone = null)
     {
         var configurationHash = InitialScoreRules.AsJson(configuration).GetHashCode(StringComparison.Ordinal);
-        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.Issue}:{configurationHash}";
+        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{timeZone?.Id}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.Issue}:{configurationHash}";
         return cache.GetOrCreateAsync(key, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
             entry.Size = 1;
-            return CalculateCoreAsync(start, end, filter, configuration, cancellationToken);
+            return CalculateCoreAsync(start, end, filter, configuration, cancellationToken, timeZone);
         })!;
     }
 
     private async Task<IReadOnlyList<FilteredScoreRow>> CalculateCoreAsync(
-        DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken)
+        DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken,
+        TimeZoneInfo? timeZone)
     {
-        var startUtc = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        var endUtc = DateTime.SpecifyKind(end.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var startLocal = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+        var endLocal = DateTime.SpecifyKind(end.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+        var startUtc = timeZone is null ? DateTime.SpecifyKind(startLocal, DateTimeKind.Utc) : TimeZoneInfo.ConvertTimeToUtc(startLocal, timeZone);
+        var endUtc = timeZone is null ? DateTime.SpecifyKind(endLocal, DateTimeKind.Utc) : TimeZoneInfo.ConvertTimeToUtc(endLocal, timeZone);
         var historyStart = startUtc.AddDays(-60);
         var businessDays = Math.Max(1, await db.BusinessCalendar.CountAsync(x => x.Date >= start && x.Date < end && x.IsBusinessDay, cancellationToken));
 

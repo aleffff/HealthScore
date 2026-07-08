@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch, authenticatedUser, initializeAuth, isAuthenticated, login, logout } from './auth'
+import AuditPage from './AuditPage.vue'
 
 const fetch = apiFetch
+const auditMode = window.location.pathname.startsWith('/audit')
 
 type Summary = {
   available: boolean
@@ -111,7 +113,7 @@ const actionHistory = ref<ActionPlanHistory[]>([])
 const actionSaving = ref(false)
 const actionMessage = ref('')
 const periods = ref<PeriodOption[]>([])
-const selectedPeriod = ref('rolling30:')
+const selectedPeriod = ref('last30')
 const exporting = ref(false)
 const operationsOpen = ref(false)
 const operationsLoading = ref(false)
@@ -130,11 +132,20 @@ const periodLabel = computed(() => {
   return `${formatDate(start)} — ${formatDate(end)}`
 })
 const hasAnalyticalFilter = computed(() => Boolean(brand.value || product.value || scope.value || issue.value))
+const usesDynamicAnalysis = computed(() => hasAnalyticalFilter.value || ['today', 'yesterday', 'last7', 'last15'].includes(selectedPeriod.value))
+const availableMonths = computed(() => periods.value.filter(item => item.snapshotKind === 'monthly'))
 
 function periodParams() {
-  const [snapshotKind, periodStart] = selectedPeriod.value.split(':')
-  const params = new URLSearchParams({ snapshotKind })
-  if (periodStart) params.set('periodStart', periodStart)
+  const params = new URLSearchParams()
+  if (['today', 'yesterday', 'last7', 'last15'].includes(selectedPeriod.value)) {
+    params.set('range', selectedPeriod.value)
+  } else if (selectedPeriod.value.startsWith('month:')) {
+    params.set('snapshotKind', 'monthly'); params.set('periodStart', selectedPeriod.value.slice(6))
+  } else {
+    const rolling = periods.value.find(item => item.snapshotKind === 'rolling30')
+    params.set('snapshotKind', 'rolling30')
+    if (rolling) params.set('periodStart', rolling.periodStart)
+  }
   if (brand.value) params.set('brand', brand.value)
   if (product.value) params.set('product', product.value)
   if (scope.value) params.set('scope', scope.value)
@@ -151,9 +162,11 @@ async function loadFilterOptions() {
 async function loadPeriods() {
   const response = await fetch('/api/v1/risk-score/periods')
   if (!response.ok) throw new Error('Períodos indisponíveis.')
-  periods.value = await response.json()
-  const rolling = periods.value.find(item => item.snapshotKind === 'rolling30')
-  if (rolling) selectedPeriod.value = `rolling30:${rolling.periodStart}`
+  const raw = await response.json() as PeriodOption[]
+  const rolling = raw.filter(item => item.snapshotKind === 'rolling30').sort((a, b) => b.periodEndExclusive.localeCompare(a.periodEndExclusive))[0]
+  const months = Array.from(new Map(raw.filter(item => item.snapshotKind === 'monthly').sort((a, b) => b.periodEndExclusive.localeCompare(a.periodEndExclusive)).map(item => [item.periodStart, item])).values())
+    .sort((a, b) => b.periodStart.localeCompare(a.periodStart))
+  periods.value = [...(rolling ? [rolling] : []), ...months]
 }
 
 async function loadAnalysis() {
@@ -164,7 +177,7 @@ async function loadAnalysis() {
     params.set('page', String(page.value)); params.set('pageSize', String(pageSize))
     if (riskBand.value) params.set('riskBand', riskBand.value)
     if (appliedSearch.value) params.set('search', appliedSearch.value)
-    if (hasAnalyticalFilter.value) {
+    if (usesDynamicAnalysis.value) {
       const response = await fetch(`/api/v1/risk-score/analysis?${params}`)
       if (!response.ok) throw new Error('Não foi possível carregar a análise.')
       const data = await response.json()
@@ -198,7 +211,7 @@ async function exportRanking() {
     const params = periodParams()
     if (riskBand.value) params.set('riskBand', riskBand.value)
     if (appliedSearch.value) params.set('search', appliedSearch.value)
-    const endpoint = hasAnalyticalFilter.value ? '/api/v1/risk-score/analysis/export' : '/api/v1/risk-score/groups/export'
+    const endpoint = usesDynamicAnalysis.value ? '/api/v1/risk-score/analysis/export' : '/api/v1/risk-score/groups/export'
     const response = await fetch(`${endpoint}?${params}`)
     if (!response.ok) throw new Error('Exportação indisponível.')
     const blob = await response.blob()
@@ -249,7 +262,7 @@ async function openDetail(id: number) {
   actionHistory.value = []
   actionMessage.value = ''
   try {
-    if (hasAnalyticalFilter.value) {
+    if (usesDynamicAnalysis.value) {
       const row = groups.value.find(item => item.id === id)
       if (!row) throw new Error('Detalhe indisponível.')
       selected.value = {
@@ -414,6 +427,7 @@ onMounted(async () => {
     loggedIn.value = isAuthenticated()
     userName.value = authenticatedUser()?.name ?? 'local-admin'
     if (!loggedIn.value) return
+    if (auditMode) return
     await Promise.all([loadPeriods(), loadFilterOptions()])
     await loadAnalysis()
   } catch (reason) {
@@ -425,6 +439,7 @@ onMounted(async () => {
 <template>
   <div v-if="!authReady" class="auth-screen">Carregando autenticação…</div>
   <div v-else-if="!loggedIn" class="auth-screen"><h1>HealthScore</h1><p>Entre com sua conta corporativa para continuar.</p><button @click="login">Entrar</button></div>
+  <AuditPage v-else-if="auditMode" />
   <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand-mark">HS</div>
@@ -433,6 +448,7 @@ onMounted(async () => {
         <span>Inteligência operacional</span>
       </div>
       <button class="operations-link" @click="openOperations">Operação</button>
+      <a class="audit-link" href="/audit">Conferência</a>
       <button class="calibration-link" @click="openCalibration">Calibragem</button>
       <span class="user-name">{{ userName }}</span>
       <button class="logout-link" @click="logout">Sair</button>
@@ -450,9 +466,8 @@ onMounted(async () => {
           <span>Janela analisada</span>
           <strong>{{ periodLabel }}</strong>
           <select v-model="selectedPeriod" aria-label="Período analisado" @change="changePeriod">
-            <option v-for="period in periods" :key="`${period.snapshotKind}:${period.periodStart}`" :value="`${period.snapshotKind}:${period.periodStart}`">
-              {{ period.snapshotKind === 'rolling30' ? 'Últimos 30 dias' : new Date(`${period.periodStart}T00:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) }}
-            </option>
+            <option value="today">Hoje</option><option value="yesterday">Ontem</option><option value="last7">Últimos 7 dias</option><option value="last15">Últimos 15 dias</option><option value="last30">Últimos 30 dias</option>
+            <option v-for="period in availableMonths" :key="period.periodStart" :value="`month:${period.periodStart}`">{{ new Date(`${period.periodStart}T00:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) }}</option>
           </select>
           <small>Atualização automática a cada hora</small>
         </div>
@@ -564,6 +579,7 @@ onMounted(async () => {
           <h2>{{ displayGroup(selected.economicGroup) }}</h2>
           <div class="drawer-score"><span class="score large" :class="scoreClass(selected.score)">{{ selected.score }}</span><div><strong>{{ selected.riskBand }}</strong><small>Principal motivo: {{ selected.mainReason }}</small></div></div>
           <div class="action-callout"><span>Ação sugerida</span><p>{{ selected.suggestedAction }}</p></div>
+          <a v-if="!usesDynamicAnalysis" class="audit-cta" :href="`/audit?group=${selected.id}`">Abrir conferência completa →</a>
           <div class="action-plan-form">
             <div class="action-plan-heading"><h3>Tratativa operacional</h3><span v-if="actionHistory.length">{{ actionHistory.length }} alterações</span></div>
             <div class="action-plan-fields">

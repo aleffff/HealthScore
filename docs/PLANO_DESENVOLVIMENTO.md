@@ -241,6 +241,9 @@ Concluído:
 - autenticação OIDC/JWT, PKCE no frontend, autorização por papéis e auditoria pelo usuário autenticado;
 - filtros de marca, produto, escopo/vertical e Issue/JIRA com recálculo do benchmark e exportação;
 - identidade real de grupos por união de conta pai e raiz de CNPJ validado, com rastreabilidade do grupo originalmente reportado;
+- página de auditoria por grupo com memória de cálculo, evidências de agrupamento, chamados utilizados e detecção de anomalias;
+- normalização temporal em UTC na API e uso de `FCR_Formula__c` como fonte oficial do indicador FCR;
+- presets de período para hoje, ontem, 7/15/30 dias e mês, com períodos diários delimitados em `America/Sao_Paulo`;
 - cache dos recortes analíticos, índices de consulta e testes unitários do motor, filtros e segurança.
 
 Parcial:

@@ -31,7 +31,7 @@ public sealed class FarmaSalesforceQueriesTests
 
         Assert.Contains("Account.Vertical__c = 'FARMA'", query, StringComparison.Ordinal);
         Assert.Contains("SLA_violado__c", query, StringComparison.Ordinal);
-        Assert.Contains("FCR__c", query, StringComparison.Ordinal);
+        Assert.Contains("FCR_Formula__c", query, StringComparison.Ordinal);
         Assert.Contains("Issue_Code_Jira__c", query, StringComparison.Ordinal);
     }
 }

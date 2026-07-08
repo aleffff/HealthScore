@@ -18,7 +18,7 @@ public static class FarmaSalesforceQueries
 
     public static string Cases(DateTime since) => $"""
         SELECT Id, CaseNumber, AccountId, CreatedDate, ClosedDate, SystemModstamp, Status, Priority,
-               SLA_violado__c, FCR__c, Issue_Code_Jira__c, Issue_type_JIRA__c,
+               SLA_violado__c, FCR_Formula__c, Issue_Code_Jira__c, Issue_type_JIRA__c,
                Produto__c, Vertical_de_Abertura__c, GrupoEconomico__c, Marca__c,
                Nivel_1__c, Nivel_2__c, Nivel_3__c, Nivel_4__c, Descricao_Taxonomia__c
         FROM Case

@@ -12,7 +12,8 @@ button { cursor: pointer; }
 .brand-copy strong { font: 700 15px 'Manrope'; }
 .brand-copy span { margin-top: 3px; color: #a9c8bb; font-size: 11px; }
 .scope-pill { padding: 8px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; color: #dcebe5; font-size: 12px; }
-.operations-link,.calibration-link { padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: #c1d8cf; font-size: 12px; }.operations-link { margin-left: auto; }.calibration-link { margin-right: 12px; }.operations-link:hover,.calibration-link:hover { background: rgba(255,255,255,.08); color: white; }
+.operations-link,.calibration-link,.audit-link { padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: #c1d8cf; font-size: 12px; text-decoration:none; }.operations-link { margin-left: auto; }.calibration-link { margin-right: 12px; }.operations-link:hover,.calibration-link:hover,.audit-link:hover { background: rgba(255,255,255,.08); color: white; }
+.audit-cta { display:block; margin:12px 0 18px; padding:11px 14px; border-radius:8px; background:#e8f4ef; color:#176b57; text-decoration:none; font-weight:700; font-size:12px; }
 .scope-pill span { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #4ed19d; box-shadow: 0 0 0 3px rgba(78,209,157,.14); }
 main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 48px 0 72px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; margin-bottom: 32px; }

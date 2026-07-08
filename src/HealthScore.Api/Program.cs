@@ -9,6 +9,7 @@ using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHealthScoreInfrastructure(builder.Configuration);
 builder.Services.AddHealthScoreSecurity(builder.Configuration);
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new UtcDateTimeJsonConverter()));
 
 var app = builder.Build();
 
@@ -121,15 +122,19 @@ app.MapGet("/api/v1/risk-score/filters", async (FilteredAnalyticsService analyti
 
 app.MapGet("/api/v1/risk-score/analysis", async (
     string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
-    string? snapshotKind, DateOnly? periodStart, int? page, int? pageSize,
+    string? range, string? snapshotKind, DateOnly? periodStart, int? page, int? pageSize,
     HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
 {
-    var period = await ResolvePeriodAsync(db, snapshotKind, periodStart, cancellationToken);
+    var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.Ok(new { available = false, items = Array.Empty<object>() });
     var configuration = InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson);
-    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), configuration, cancellationToken);
-    var snapshotIds = await db.GroupScoreSnapshots.AsNoTracking().Where(x => x.SnapshotKind == period.Value.Kind && x.PeriodStart == period.Value.Start && x.PeriodEndExclusive == period.Value.End && x.ScoreRuleVersionId == period.Value.Rule.Id)
-        .ToDictionaryAsync(x => x.EconomicGroup, x => x.Id, cancellationToken);
+    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), configuration, cancellationToken, period.Value.TimeZone);
+    var idQuery = db.GroupScoreSnapshots.AsNoTracking().Where(x => x.ScoreRuleVersionId == period.Value.Rule.Id);
+    idQuery = period.Value.Dynamic
+        ? idQuery.Where(x => x.SnapshotKind == "rolling30")
+        : idQuery.Where(x => x.SnapshotKind == period.Value.Kind && x.PeriodStart == period.Value.Start && x.PeriodEndExclusive == period.Value.End);
+    var idRows = await idQuery.OrderByDescending(x => x.PeriodEndExclusive).Select(x => new { x.EconomicGroup, x.Id }).ToListAsync(cancellationToken);
+    var snapshotIds = idRows.GroupBy(x => x.EconomicGroup).ToDictionary(x => x.Key, x => x.First().Id);
     var rows = calculated.Select(x => x with { Id = snapshotIds.GetValueOrDefault(x.EconomicGroup) }).ToList();
     var filtered = rows.AsEnumerable();
     if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
@@ -151,11 +156,11 @@ app.MapGet("/api/v1/risk-score/analysis", async (
 
 app.MapGet("/api/v1/risk-score/analysis/export", async (
     string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
-    string? snapshotKind, DateOnly? periodStart, HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
+    string? range, string? snapshotKind, DateOnly? periodStart, HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
 {
-    var period = await ResolvePeriodAsync(db, snapshotKind, periodStart, cancellationToken);
+    var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.NotFound();
-    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken);
+    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken, period.Value.TimeZone);
     var filtered = rows.AsEnumerable();
     if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
     if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -271,6 +276,93 @@ app.MapGet("/api/v1/risk-score/groups/{id:long}", async (long id, HealthScoreDbC
         snapshot.ScoreRuleVersionId, snapshot.CalculatedAt
     });
 });
+
+app.MapGet("/api/v1/audit/groups/{id:long}", async (long id, HealthScoreDbContext db, CancellationToken cancellationToken) =>
+{
+    var snapshot = await db.GroupScoreSnapshots.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (snapshot is null) return Results.NotFound();
+    var rule = await db.ScoreRuleVersions.AsNoTracking().SingleAsync(x => x.Id == snapshot.ScoreRuleVersionId, cancellationToken);
+    var configuration = InitialScoreRules.Parse(rule.ConfigurationJson);
+    var start = DateTime.SpecifyKind(snapshot.PeriodStart.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+    var end = DateTime.SpecifyKind(snapshot.PeriodEndExclusive.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+    var accounts = await db.Accounts.AsNoTracking().Where(x => x.EconomicGroup == snapshot.EconomicGroup)
+        .OrderBy(x => x.Name).Select(x => new
+        {
+            x.SalesforceId, x.Name, x.Cnpj, x.CnpjRoot, x.ParentSalesforceId, x.ParentName,
+            x.ReportedEconomicGroup, ResolvedEconomicGroup = x.EconomicGroup, x.Brand, x.Status
+        }).ToListAsync(cancellationToken);
+    var parentCounts = accounts.Where(x => x.ParentSalesforceId != null).GroupBy(x => x.ParentSalesforceId!).ToDictionary(x => x.Key, x => x.Count());
+    var rootCounts = accounts.Where(x => x.CnpjRoot != null).GroupBy(x => x.CnpjRoot!).ToDictionary(x => x.Key, x => x.Count());
+    var accountRows = accounts.Select(account => new
+    {
+        account.SalesforceId, account.Name, account.Cnpj, account.CnpjRoot, account.ParentSalesforceId, account.ParentName,
+        account.ReportedEconomicGroup, account.ResolvedEconomicGroup, account.Brand, account.Status,
+        activeStore = account.Cnpj != null && (account.Status == "ATIVO" || account.Status == "Ativa"),
+        evidence = new[]
+        {
+            account.ParentSalesforceId is not null && parentCounts.GetValueOrDefault(account.ParentSalesforceId) > 1 ? "conta_pai" : null,
+            account.CnpjRoot is not null && rootCounts.GetValueOrDefault(account.CnpjRoot) > 1 ? "raiz_cnpj" : null
+        }.Where(x => x is not null)
+    }).ToList();
+
+    var cases = db.Cases.AsNoTracking().Where(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= start && x.SalesforceCreatedAt < end);
+    var caseQuality = await cases.GroupBy(_ => 1).Select(group => new
+    {
+        total = group.Count(), slaMissing = group.Count(x => x.SlaViolated == null), fcrMissing = group.Count(x => x.FirstContactResolution == null),
+        taxonomyMissing = group.Count(x => (x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription) == null),
+        accountMissing = group.Count(x => x.AccountSalesforceId == null), closedBeforeCreated = group.Count(x => x.ClosedAt != null && x.ClosedAt < x.SalesforceCreatedAt),
+        jira = group.Count(x => x.JiraIssueCode != null && x.JiraIssueCode != ""), sla = group.Count(x => x.SlaViolated == true),
+        fcr = group.Count(x => x.FirstContactResolution == true), critical = group.Count(x => x.Priority != null && configuration.CriticalPriorities.Contains(x.Priority))
+    }).FirstOrDefaultAsync(cancellationToken);
+    var historicalTotal = await db.Cases.AsNoTracking().CountAsync(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= start.AddDays(-60) && x.SalesforceCreatedAt < end, cancellationToken);
+    var reportedGroups = accounts.Select(x => x.ReportedEconomicGroup).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var parentIds = accounts.Select(x => x.ParentSalesforceId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var invalidCnpj = accounts.Count(x => x.Cnpj != null && x.CnpjRoot == null);
+    var missingCnpj = accounts.Count(x => x.Cnpj == null);
+    var anomalies = new List<object>();
+    AddAnomaly(anomalies, "warning", "Contas sem CNPJ", missingCnpj, "Não participam da ligação por raiz de CNPJ nem da contagem de lojas ativas.");
+    AddAnomaly(anomalies, "warning", "CNPJs inválidos", invalidCnpj, "Foram ignorados na formação do grupo porque os dígitos verificadores são inválidos.");
+    AddAnomaly(anomalies, "info", "Mais de uma conta pai no componente", Math.Max(parentIds.Length - 1, 0), "Pode ser resultado de uma ligação transitiva pela mesma raiz de CNPJ; confira as lojas.");
+    AddAnomaly(anomalies, "info", "Grupos reportados divergentes", Math.Max(reportedGroups.Length - 1, 0), "O agrupamento resolvido prevalece, mas os valores originais do Salesforce divergem.");
+    AddAnomaly(anomalies, "warning", "Chamados sem SLA", caseQuality?.slaMissing ?? 0, "Reduz a base observável do indicador de SLA.");
+    AddAnomaly(anomalies, "warning", "Chamados sem FCR", caseQuality?.fcrMissing ?? 0, "Reduz a base observável do indicador de FCR.");
+    AddAnomaly(anomalies, "warning", "Chamados sem taxonomia", caseQuality?.taxonomyMissing ?? 0, "Prejudica a conferência de recorrência e principais ofensores.");
+    AddAnomaly(anomalies, "danger", "Fechamento anterior à criação", caseQuality?.closedBeforeCreated ?? 0, "Indica inconsistência temporal no Salesforce.");
+
+    var factors = new[]
+    {
+        new { name = "Densidade", points = snapshot.DensityPoints, maximum = configuration.Weights.Density, value = snapshot.DensityVsAverage, formula = $"{snapshot.TotalCases} chamados ÷ ({snapshot.ActiveStores} lojas × {snapshot.BusinessDays} dias úteis) ÷ média {snapshot.AverageDensity:N6}" },
+        new { name = "Crescimento", points = snapshot.GrowthPoints, maximum = configuration.Weights.Growth, value = snapshot.RecentGrowthRate, formula = $"{snapshot.TotalCases} ÷ média mensal histórica {(historicalTotal / 3m):N2} − 1" },
+        new { name = "SLA", points = snapshot.SlaPoints, maximum = configuration.Weights.Sla, value = snapshot.SlaViolatedRate, formula = $"{caseQuality?.sla ?? 0} violados ÷ {snapshot.TotalCases} chamados" },
+        new { name = "FCR", points = snapshot.FcrPoints, maximum = configuration.Weights.Fcr, value = snapshot.FcrRate, formula = $"{caseQuality?.fcr ?? 0} com FCR ÷ {snapshot.TotalCases} chamados" },
+        new { name = "Criticidade", points = snapshot.CriticalPoints, maximum = configuration.Weights.Criticality, value = snapshot.CriticalRate, formula = $"{caseQuality?.critical ?? 0} críticos ÷ {snapshot.TotalCases} chamados" },
+        new { name = "Issue/JIRA", points = snapshot.IssuePoints, maximum = configuration.Weights.Issue, value = snapshot.IssueRate, formula = $"{caseQuality?.jira ?? 0} com Issue ÷ {snapshot.TotalCases} chamados" },
+        new { name = "Recorrência", points = snapshot.RecurrencePoints, maximum = configuration.Weights.Recurrence, value = snapshot.RecurrenceRate, formula = $"Chamados recorrentes na janela de {configuration.RecurrenceWindowDays} dias ÷ {snapshot.TotalCases}" }
+    };
+    return Results.Ok(new
+    {
+        group = new { snapshot.Id, snapshot.EconomicGroup, displayName = DisplayGroup(snapshot.EconomicGroup), groupKey = ExtractGroupKey(snapshot.EconomicGroup), snapshot.PeriodStart, snapshot.PeriodEndExclusive, snapshot.Score, snapshot.RiskBand, snapshot.MainReason, snapshot.CalculatedAt },
+        calculation = new { snapshot.ActiveStores, snapshot.BusinessDays, snapshot.TotalCases, snapshot.Density, snapshot.AverageDensity, snapshot.DensityVsAverage, historicalTotal, score = snapshot.Score, factors, rule = new { version = rule.Id, rule.Name, rule.PublishedAt, rule.CreatedBy, rule.Justification } },
+        grouping = new { accounts = accountRows, totalAccounts = accounts.Count, activeStores = accountRows.Count(x => x.activeStore), parentIds, cnpjRoots = accounts.Select(x => x.CnpjRoot).Where(x => x != null).Distinct().ToArray(), reportedGroups },
+        quality = new { cases = caseQuality, anomalies }
+    });
+}).RequireAuthorization("Viewer");
+
+app.MapGet("/api/v1/audit/groups/{id:long}/cases", async (
+    long id, int? page, int? pageSize, bool? anomaliesOnly, string? search, HealthScoreDbContext db, CancellationToken cancellationToken) =>
+{
+    var snapshot = await db.GroupScoreSnapshots.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (snapshot is null) return Results.NotFound();
+    var start = DateTime.SpecifyKind(snapshot.PeriodStart.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+    var end = DateTime.SpecifyKind(snapshot.PeriodEndExclusive.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+    var query = db.Cases.AsNoTracking().Where(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= start && x.SalesforceCreatedAt < end);
+    if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.CaseNumber.Contains(search.Trim()) || x.SalesforceId.Contains(search.Trim()));
+    if (anomaliesOnly == true) query = query.Where(x => x.SlaViolated == null || x.FirstContactResolution == null || x.AccountSalesforceId == null || (x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription) == null || (x.ClosedAt != null && x.ClosedAt < x.SalesforceCreatedAt));
+    var safePage = Math.Max(page ?? 1, 1); var safePageSize = Math.Clamp(pageSize ?? 50, 1, 200); var total = await query.CountAsync(cancellationToken);
+    var items = await query.OrderByDescending(x => x.SalesforceCreatedAt).Skip((safePage - 1) * safePageSize).Take(safePageSize)
+        .Select(x => new { x.SalesforceId, x.CaseNumber, x.AccountSalesforceId, x.SalesforceCreatedAt, x.ClosedAt, x.Status, x.Priority, x.SlaViolated, x.FirstContactResolution, x.JiraIssueCode, x.JiraIssueType, x.Product, x.OpeningVertical, x.Brand, taxonomy = x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription }).ToListAsync(cancellationToken);
+    return Results.Ok(new { page = safePage, pageSize = safePageSize, total, items });
+}).RequireAuthorization("Viewer");
 
 app.MapGet("/api/v1/risk-score/groups/{id:long}/evolution", async (long id, HealthScoreDbContext db, CancellationToken cancellationToken) =>
 {
@@ -513,16 +605,33 @@ static string Csv(object? value)
     return '"' + text.Replace("\"", "\"\"") + '"';
 }
 static string DisplayGroup(string value) => System.Text.RegularExpressions.Regex.Replace(value, @" \[(?:P|C|A):[^\]]+\]$", string.Empty);
-
-static async Task<(DateOnly Start, DateOnly End, string Kind, HealthScore.Domain.ScoreRuleVersion Rule)?> ResolvePeriodAsync(
-    HealthScoreDbContext db, string? snapshotKind, DateOnly? periodStart, CancellationToken cancellationToken)
+static string? ExtractGroupKey(string value)
 {
-    var kind = NormalizeSnapshotKind(snapshotKind);
+    var match = System.Text.RegularExpressions.Regex.Match(value, @" \[((?:P|C|A):[^\]]+)\]$");
+    return match.Success ? match.Groups[1].Value : null;
+}
+static void AddAnomaly(List<object> target, string severity, string title, int count, string explanation)
+{
+    if (count > 0) target.Add(new { severity, title, count, explanation });
+}
+
+static async Task<(DateOnly Start, DateOnly End, string Kind, HealthScore.Domain.ScoreRuleVersion Rule, TimeZoneInfo? TimeZone, bool Dynamic)?> ResolvePeriodAsync(
+    HealthScoreDbContext db, string? range, string? snapshotKind, DateOnly? periodStart, CancellationToken cancellationToken)
+{
     var rule = await db.ScoreRuleVersions.AsNoTracking().Where(x => x.Status == "published").OrderByDescending(x => x.Id).FirstAsync(cancellationToken);
+    if (range is "today" or "yesterday" or "last7" or "last15")
+    {
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, timeZone));
+        var start = range switch { "today" => today, "yesterday" => today.AddDays(-1), "last7" => today.AddDays(-6), _ => today.AddDays(-14) };
+        var end = range == "yesterday" ? today : today.AddDays(1);
+        return (start, end, range, rule, timeZone, true);
+    }
+    var kind = NormalizeSnapshotKind(snapshotKind);
     var query = db.GroupScoreSnapshots.AsNoTracking().Where(x => x.SnapshotKind == kind && x.ScoreRuleVersionId == rule.Id);
     if (periodStart.HasValue) query = query.Where(x => x.PeriodStart == periodStart.Value);
     var selected = await query.OrderByDescending(x => x.PeriodEndExclusive).Select(x => new { x.PeriodStart, x.PeriodEndExclusive }).FirstOrDefaultAsync(cancellationToken);
-    return selected is null ? null : (selected.PeriodStart, selected.PeriodEndExclusive, kind, rule);
+    return selected is null ? null : (selected.PeriodStart, selected.PeriodEndExclusive, kind, rule, null, false);
 }
 
 sealed record PublishScoreConfigurationRequest(string Name, string CreatedBy, string Justification, ScoreConfiguration Configuration);

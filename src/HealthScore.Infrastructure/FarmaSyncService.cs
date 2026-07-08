@@ -211,7 +211,7 @@ public sealed class FarmaSyncService(
         Status = Clean(GetString(record, "Status")),
         Priority = Clean(GetString(record, "Priority")),
         SlaViolated = GetBoolean(record, "SLA_violado__c"),
-        FirstContactResolution = GetBoolean(record, "FCR__c"),
+        FirstContactResolution = GetBoolean(record, "FCR_Formula__c"),
         JiraIssueCode = Clean(GetString(record, "Issue_Code_Jira__c")),
         JiraIssueType = Clean(GetString(record, "Issue_type_JIRA__c")),
         Product = Clean(GetString(record, "Produto__c")),

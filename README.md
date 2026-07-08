@@ -45,6 +45,7 @@ URLs locais:
 - densidade por grupo e benchmark médio da carteira;
 - crescimento recente 30/90 dias;
 - SLA violado, FCR, Issue/JIRA e criticidade;
+- FCR obtido do campo calculado oficial `FCR_Formula__c`;
 - recorrência por grupo, taxonomia e janela de 30 dias;
 - score de 0 a 100 e faixas Baixo, Atenção, Alto e Crítico;
 - desempate auditável do principal motivo;
@@ -59,7 +60,8 @@ URLs locais:
 - ranking paginado;
 - busca por grupo econômico;
 - filtro por faixa de risco;
-- filtro entre últimos 30 dias e competências mensais;
+- janela de análise com presets únicos para Hoje, Ontem, últimos 7, 15 e 30 dias e competências mensais;
+- períodos diários calculados pelos limites de `America/Sao_Paulo`, evitando deslocamento de chamados entre dias;
 - filtros de marca, produto, escopo/vertical e presença de Issue/JIRA;
 - recálculo do benchmark, crescimento, recorrência e score para cada recorte analítico;
 - cache de 10 minutos por combinação de filtros e índices dedicados no MariaDB;
@@ -72,6 +74,12 @@ URLs locais:
 - plano de ação com responsável, status e observações;
 - histórico append-only das alterações da tratativa;
 - visão de operação e qualidade dos dados.
+- página de conferência em `/audit`, acessível pelo menu e pelo drill-down do grupo;
+- explicação do score com fórmula, numeradores, denominadores, benchmark e versão da regra;
+- conferência de todas as contas agrupadas, CNPJ/raiz, conta pai, grupo reportado, status e evidência de vínculo;
+- listagem paginada dos chamados efetivamente utilizados no período;
+- busca de chamados por número ou Salesforce Id na página de conferência;
+- alertas automáticos para CNPJ ausente/inválido, divergência de conta pai/grupo reportado, SLA/FCR/taxonomia ausentes e inconsistência temporal.
 
 ### Calibragem e governança
 
@@ -244,6 +252,10 @@ AUTH_GROUP_SYSTEM_ADMIN=grupo-healthscore-system-admin
 
 As alterações de tratativas e publicações de regras registram a identidade obtida do token; valores de usuário enviados pelo navegador não são usados para auditoria.
 
+## Datas e horários
+
+Datas do Salesforce e do MariaDB são armazenadas em UTC. A API sempre serializa `DateTime` com o sufixo `Z`; o navegador converte para o fuso local do usuário. Exemplo: `2026-07-07T21:31:45Z` é exibido como `07/07/2026 18:31:45` em `America/Sao_Paulo`.
+
 ## Principais endpoints
 
 - `GET /health/live`
@@ -255,6 +267,8 @@ As alterações de tratativas e publicações de regras registram a identidade o
 - `GET /api/v1/risk-score/groups`
 - `GET /api/v1/risk-score/groups/export`
 - `GET /api/v1/risk-score/groups/{id}`
+- `GET /api/v1/audit/groups/{id}`
+- `GET /api/v1/audit/groups/{id}/cases`
 - `GET /api/v1/risk-score/groups/{id}/evolution`
 - `GET /api/v1/risk-score/groups/{id}/accounts`
 - `GET /api/v1/risk-score/groups/{id}/taxonomy`
