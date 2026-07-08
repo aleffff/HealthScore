@@ -76,6 +76,8 @@ URLs locais:
 - visão de operação e qualidade dos dados.
 - página de conferência em `/audit`, acessível pelo menu e pelo drill-down do grupo;
 - explicação do score com fórmula, numeradores, denominadores, benchmark e versão da regra;
+- tabela única de chamados com colunas de Densidade, Crescimento, SLA, FCR, Criticidade, Issue/JIRA e Recorrência;
+- sinalização por chamado do fator afetado e dos pontos agregados do grupo, distinguindo período atual/base histórica, prioridade crítica, código JIRA e tema repetido;
 - conferência de todas as contas agrupadas, CNPJ/raiz, conta pai, grupo reportado, status e evidência de vínculo;
 - listagem paginada dos chamados efetivamente utilizados no período;
 - busca de chamados por número ou Salesforce Id na página de conferência;
@@ -202,6 +204,27 @@ Verifique os serviços:
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:8080/health/ready
 ```
+
+### Exportar o JSON de um chamado do Salesforce
+
+Quando ferramentas externas como o Workbench estiverem bloqueadas, use o utilitário local. Ele reutiliza a Connected App configurada no `.env`, consulta todos os campos acessíveis do objeto `Case` e não grava o token OAuth:
+
+```powershell
+.\tools\export-salesforce-case.ps1 -CaseNumber 05769909
+```
+
+Os arquivos são salvos em `artifacts/salesforce/`:
+
+- `case-05769909.json`: registro completo, com nome técnico e valor de cada campo;
+- `case-05769909-fields.json`: catálogo com nome técnico, label, tipo e valor.
+
+Essa pasta é ignorada pelo Git porque os arquivos podem conter dados de clientes. Para usar outro arquivo de ambiente ou diretório de saída, informe `-EnvFile` ou `-OutputDirectory`.
+
+Os filtros analíticos usam `Case.Produto_Taxonomia__c` como produto, `Case.Segmento__c` como escopo/vertical e `Case.Unidade_de_Negocio_de_Abertura__c` como unidade de negócio.
+
+A carga de chamados nunca consulta dados anteriores a `SYNC_DATA_START_UTC`. O ambiente atual usa `2026-01-01T00:00:00Z`. Para ampliar ou reduzir o histórico no futuro, altere essa variável e remova o watermark de `Case` antes de reiniciar o worker.
+
+As consultas analíticas por período possuem índice iniciado por `SalesforceCreatedAt`; as contagens de lojas possuem índices por status/grupo/CNPJ, incluindo a variação filtrada por marca.
 
 ## Desenvolvimento
 

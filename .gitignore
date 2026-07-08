@@ -10,5 +10,6 @@ TestResults/
 coverage/
 **/node_modules/
 **/dist/
+artifacts/salesforce/
 *.user
 *.suo

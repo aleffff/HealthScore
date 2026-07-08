@@ -40,8 +40,13 @@ public sealed class FarmaSyncService(
     private async Task<(int Read, int Written)> SyncCasesAsync(CancellationToken cancellationToken)
     {
         var watermark = await GetWatermarkAsync(CaseEntity, cancellationToken);
-        var since = (watermark ?? DateTime.UtcNow.AddDays(-_options.InitialLookbackDays))
-            .AddMinutes(-_options.WatermarkOverlapMinutes);
+        var dataStartUtc = _options.DataStartUtc.Kind == DateTimeKind.Utc
+            ? _options.DataStartUtc
+            : DateTime.SpecifyKind(_options.DataStartUtc, DateTimeKind.Utc);
+        var incrementalStart = watermark?.AddMinutes(-_options.WatermarkOverlapMinutes);
+        var since = incrementalStart.HasValue && incrementalStart.Value > dataStartUtc
+            ? incrementalStart.Value
+            : dataStartUtc;
         var soql = FarmaSalesforceQueries.Cases(since);
 
         return await ExecuteRunAsync(CaseEntity, salesforce.QueryAsync(soql, cancellationToken), MapCase, cancellationToken);
@@ -214,8 +219,9 @@ public sealed class FarmaSyncService(
         FirstContactResolution = GetBoolean(record, "FCR_Formula__c"),
         JiraIssueCode = Clean(GetString(record, "Issue_Code_Jira__c")),
         JiraIssueType = Clean(GetString(record, "Issue_type_JIRA__c")),
-        Product = Clean(GetString(record, "Produto__c")),
-        OpeningVertical = Clean(GetString(record, "Vertical_de_Abertura__c")),
+        Product = Clean(GetString(record, "Produto_Taxonomia__c")),
+        OpeningVertical = Clean(GetString(record, "Segmento__c")),
+        OpeningBusinessUnit = Clean(GetString(record, "Unidade_de_Negocio_de_Abertura__c")),
         TaxonomyLevel1 = Clean(GetString(record, "Nivel_1__c")),
         TaxonomyLevel2 = Clean(GetString(record, "Nivel_2__c")),
         TaxonomyLevel3 = Clean(GetString(record, "Nivel_3__c")),

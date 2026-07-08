@@ -23,6 +23,6 @@ public sealed class SyncOptions
 {
     public const string SectionName = "Sync";
     public int IntervalMinutes { get; init; } = 60;
-    public int InitialLookbackDays { get; init; } = 730;
+    public DateTime DataStartUtc { get; init; } = new(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     public int WatermarkOverlapMinutes { get; init; } = 5;
 }

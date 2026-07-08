@@ -4,6 +4,7 @@ using HealthScore.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace HealthScore.Infrastructure.Migrations
 {
     [DbContext(typeof(HealthScoreDbContext))]
-    partial class HealthScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260708145444_AddOpeningBusinessUnit")]
+    partial class AddOpeningBusinessUnit
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -98,10 +101,6 @@ namespace HealthScore.Infrastructure.Migrations
 
                     b.HasIndex("SalesforceId")
                         .IsUnique();
-
-                    b.HasIndex("Status", "EconomicGroup", "Cnpj");
-
-                    b.HasIndex("Brand", "Status", "EconomicGroup", "Cnpj");
 
                     b.ToTable("accounts", (string)null);
                 });
@@ -318,8 +317,6 @@ namespace HealthScore.Infrastructure.Migrations
                     b.HasIndex("OpeningVertical", "SalesforceCreatedAt");
 
                     b.HasIndex("Product", "SalesforceCreatedAt");
-
-                    b.HasIndex("SalesforceCreatedAt", "EconomicGroup");
 
                     b.ToTable("cases", (string)null);
                 });

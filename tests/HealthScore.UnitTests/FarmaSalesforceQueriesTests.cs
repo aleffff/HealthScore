@@ -33,5 +33,10 @@ public sealed class FarmaSalesforceQueriesTests
         Assert.Contains("SLA_violado__c", query, StringComparison.Ordinal);
         Assert.Contains("FCR_Formula__c", query, StringComparison.Ordinal);
         Assert.Contains("Issue_Code_Jira__c", query, StringComparison.Ordinal);
+        Assert.Contains("Produto_Taxonomia__c", query, StringComparison.Ordinal);
+        Assert.Contains("Segmento__c", query, StringComparison.Ordinal);
+        Assert.Contains("Unidade_de_Negocio_de_Abertura__c", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("Produto__c", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("Vertical_de_Abertura__c", query, StringComparison.Ordinal);
     }
 }

@@ -1,20 +1,22 @@
 using HealthScore.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 
 namespace HealthScore.Infrastructure;
 
-public sealed record AnalyticsFilter(string? Brand, string? Product, string? Scope, string? Issue)
+public sealed record AnalyticsFilter(string? Brand, string? Product, string? Scope, string? BusinessUnit, string? Issue)
 {
     public string? Brand { get; } = Clean(Brand);
     public string? Product { get; } = Clean(Product);
     public string? Scope { get; } = Clean(Scope);
+    public string? BusinessUnit { get; } = Clean(BusinessUnit);
     public string? Issue { get; } = Issue is "with" or "without" ? Issue : null;
-    public bool IsEmpty => Brand is null && Product is null && Scope is null && Issue is null;
+    public bool IsEmpty => Brand is null && Product is null && Scope is null && BusinessUnit is null && Issue is null;
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
-public sealed record FilterOptions(IReadOnlyList<string> Brands, IReadOnlyList<string> Products, IReadOnlyList<string> Scopes);
+public sealed record FilterOptions(IReadOnlyList<string> Brands, IReadOnlyList<string> Products, IReadOnlyList<string> Scopes, IReadOnlyList<string> BusinessUnits);
 public sealed record FilteredScoreRow(
     string EconomicGroup, int ActiveStores, int TotalCases, decimal Density, decimal AverageDensity,
     decimal DensityVsAverage, decimal SlaViolatedRate, decimal FcrRate, decimal IssueRate,
@@ -25,15 +27,20 @@ public sealed record FilteredScoreRow(
     public long Id { get; init; }
 }
 
-public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCache cache)
+public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCache cache, IOptions<SyncOptions> syncOptions)
 {
     public async Task<FilterOptions> GetOptionsAsync(CancellationToken cancellationToken)
     {
         if (cache.TryGetValue<FilterOptions>("analytics-filter-options", out var cached)) return cached!;
-        var brands = await DistinctValues(db.Cases.Select(x => x.Brand), cancellationToken);
-        var products = await DistinctValues(db.Cases.Select(x => x.Product), cancellationToken);
-        var scopes = await DistinctValues(db.Cases.Select(x => x.OpeningVertical), cancellationToken);
-        var result = new FilterOptions(brands, products, scopes);
+        var dataStartUtc = syncOptions.Value.DataStartUtc.Kind == DateTimeKind.Utc
+            ? syncOptions.Value.DataStartUtc
+            : DateTime.SpecifyKind(syncOptions.Value.DataStartUtc, DateTimeKind.Utc);
+        var cases = db.Cases.Where(x => x.SalesforceCreatedAt >= dataStartUtc);
+        var brands = await DistinctValues(cases.Select(x => x.Brand), cancellationToken);
+        var products = await DistinctValues(cases.Select(x => x.Product), cancellationToken);
+        var scopes = await DistinctValues(cases.Select(x => x.OpeningVertical), cancellationToken);
+        var businessUnits = await DistinctValues(cases.Select(x => x.OpeningBusinessUnit), cancellationToken);
+        var result = new FilterOptions(brands, products, scopes, businessUnits);
         cache.Set("analytics-filter-options", result, TimeSpan.FromMinutes(30));
         return result;
     }
@@ -43,7 +50,7 @@ public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCac
         TimeZoneInfo? timeZone = null)
     {
         var configurationHash = InitialScoreRules.AsJson(configuration).GetHashCode(StringComparison.Ordinal);
-        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{timeZone?.Id}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.Issue}:{configurationHash}";
+        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{timeZone?.Id}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.BusinessUnit}:{filter.Issue}:{configurationHash}";
         return cache.GetOrCreateAsync(key, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
@@ -91,6 +98,7 @@ public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCac
         if (filter.Brand is not null) query = query.Where(x => x.Brand == filter.Brand);
         if (filter.Product is not null) query = query.Where(x => x.Product == filter.Product);
         if (filter.Scope is not null) query = query.Where(x => x.OpeningVertical == filter.Scope);
+        if (filter.BusinessUnit is not null) query = query.Where(x => x.OpeningBusinessUnit == filter.BusinessUnit);
         if (filter.Issue == "with") query = query.Where(x => x.JiraIssueCode != null && x.JiraIssueCode != "");
         if (filter.Issue == "without") query = query.Where(x => x.JiraIssueCode == null || x.JiraIssueCode == "");
         return query;

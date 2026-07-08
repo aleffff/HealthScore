@@ -121,14 +121,14 @@ app.MapGet("/api/v1/risk-score/filters", async (FilteredAnalyticsService analyti
     Results.Ok(await analytics.GetOptionsAsync(cancellationToken))).RequireAuthorization("Viewer");
 
 app.MapGet("/api/v1/risk-score/analysis", async (
-    string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
+    string? brand, string? product, string? scope, string? businessUnit, string? issue, string? riskBand, string? search,
     string? range, string? snapshotKind, DateOnly? periodStart, int? page, int? pageSize,
     HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
 {
     var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.Ok(new { available = false, items = Array.Empty<object>() });
     var configuration = InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson);
-    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), configuration, cancellationToken, period.Value.TimeZone);
+    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), configuration, cancellationToken, period.Value.TimeZone);
     var idQuery = db.GroupScoreSnapshots.AsNoTracking().Where(x => x.ScoreRuleVersionId == period.Value.Rule.Id);
     idQuery = period.Value.Dynamic
         ? idQuery.Where(x => x.SnapshotKind == "rolling30")
@@ -155,12 +155,12 @@ app.MapGet("/api/v1/risk-score/analysis", async (
 }).RequireAuthorization("Viewer");
 
 app.MapGet("/api/v1/risk-score/analysis/export", async (
-    string? brand, string? product, string? scope, string? issue, string? riskBand, string? search,
+    string? brand, string? product, string? scope, string? businessUnit, string? issue, string? riskBand, string? search,
     string? range, string? snapshotKind, DateOnly? periodStart, HealthScoreDbContext db, FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
 {
     var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.NotFound();
-    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken, period.Value.TimeZone);
+    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken, period.Value.TimeZone);
     var filtered = rows.AsEnumerable();
     if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
     if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -353,14 +353,49 @@ app.MapGet("/api/v1/audit/groups/{id:long}/cases", async (
 {
     var snapshot = await db.GroupScoreSnapshots.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (snapshot is null) return Results.NotFound();
+    var rule = await db.ScoreRuleVersions.AsNoTracking().SingleAsync(x => x.Id == snapshot.ScoreRuleVersionId, cancellationToken);
+    var configuration = InitialScoreRules.Parse(rule.ConfigurationJson);
     var start = DateTime.SpecifyKind(snapshot.PeriodStart.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
     var end = DateTime.SpecifyKind(snapshot.PeriodEndExclusive.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-    var query = db.Cases.AsNoTracking().Where(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= start && x.SalesforceCreatedAt < end);
+    var historyStart = start.AddDays(-60);
+    var recurrenceRows = await db.Cases.AsNoTracking()
+        .Where(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= start.AddDays(-configuration.RecurrenceWindowDays) && x.SalesforceCreatedAt < end)
+        .Where(x => (x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription) != null && (x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription) != "")
+        .OrderBy(x => x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription).ThenBy(x => x.SalesforceCreatedAt)
+        .Select(x => new { x.SalesforceId, x.SalesforceCreatedAt, Taxonomy = x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription }).ToListAsync(cancellationToken);
+    var recurringIds = new HashSet<string>(); string? previousTheme = null; DateTime previousDate = default;
+    foreach (var row in recurrenceRows)
+    {
+        if (row.SalesforceCreatedAt >= start && row.Taxonomy == previousTheme && row.SalesforceCreatedAt - previousDate <= TimeSpan.FromDays(configuration.RecurrenceWindowDays)) recurringIds.Add(row.SalesforceId);
+        previousTheme = row.Taxonomy; previousDate = row.SalesforceCreatedAt;
+    }
+    var query = db.Cases.AsNoTracking().Where(x => x.EconomicGroup == snapshot.EconomicGroup && x.SalesforceCreatedAt >= historyStart && x.SalesforceCreatedAt < end);
     if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.CaseNumber.Contains(search.Trim()) || x.SalesforceId.Contains(search.Trim()));
     if (anomaliesOnly == true) query = query.Where(x => x.SlaViolated == null || x.FirstContactResolution == null || x.AccountSalesforceId == null || (x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription) == null || (x.ClosedAt != null && x.ClosedAt < x.SalesforceCreatedAt));
     var safePage = Math.Max(page ?? 1, 1); var safePageSize = Math.Clamp(pageSize ?? 50, 1, 200); var total = await query.CountAsync(cancellationToken);
-    var items = await query.OrderByDescending(x => x.SalesforceCreatedAt).Skip((safePage - 1) * safePageSize).Take(safePageSize)
+    var rawItems = await query.OrderByDescending(x => x.SalesforceCreatedAt).Skip((safePage - 1) * safePageSize).Take(safePageSize)
         .Select(x => new { x.SalesforceId, x.CaseNumber, x.AccountSalesforceId, x.SalesforceCreatedAt, x.ClosedAt, x.Status, x.Priority, x.SlaViolated, x.FirstContactResolution, x.JiraIssueCode, x.JiraIssueType, x.Product, x.OpeningVertical, x.Brand, taxonomy = x.TaxonomyLevel4 ?? x.TaxonomyLevel3 ?? x.TaxonomyLevel2 ?? x.TaxonomyDescription }).ToListAsync(cancellationToken);
+    var items = rawItems.Select(item =>
+    {
+        var current = item.SalesforceCreatedAt >= start;
+        object? Signal(bool active, int points) => active ? new { points } : null;
+        return new
+        {
+            item.SalesforceId, item.CaseNumber, item.AccountSalesforceId, item.SalesforceCreatedAt, item.ClosedAt,
+            item.Status, item.Priority, item.SlaViolated, item.FirstContactResolution, item.JiraIssueCode, item.JiraIssueType,
+            item.Product, item.OpeningVertical, item.Brand, item.taxonomy,
+            evidence = new
+            {
+                density = Signal(current, snapshot.DensityPoints),
+                growth = Signal(true, snapshot.GrowthPoints),
+                sla = Signal(current && item.SlaViolated == true, snapshot.SlaPoints),
+                fcr = Signal(current && item.FirstContactResolution != true, snapshot.FcrPoints),
+                criticality = Signal(current && item.Priority is not null && configuration.CriticalPriorities.Contains(item.Priority), snapshot.CriticalPoints),
+                issue = Signal(current && !string.IsNullOrWhiteSpace(item.JiraIssueCode), snapshot.IssuePoints),
+                recurrence = Signal(current && recurringIds.Contains(item.SalesforceId), snapshot.RecurrencePoints)
+            }
+        };
+    }).ToList();
     return Results.Ok(new { page = safePage, pageSize = safePageSize, total, items });
 }).RequireAuthorization("Viewer");
 

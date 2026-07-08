@@ -38,6 +38,8 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.HasIndex(x => x.Cnpj);
             entity.HasIndex(x => x.CnpjRoot);
             entity.HasIndex(x => x.ParentSalesforceId);
+            entity.HasIndex(x => new { x.Status, x.EconomicGroup, x.Cnpj });
+            entity.HasIndex(x => new { x.Brand, x.Status, x.EconomicGroup, x.Cnpj });
         });
 
         modelBuilder.Entity<CaseRecord>(entity =>
@@ -57,6 +59,7 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.Property(x => x.JiraIssueType).HasMaxLength(100);
             entity.Property(x => x.Product).HasMaxLength(255);
             entity.Property(x => x.OpeningVertical).HasMaxLength(100);
+            entity.Property(x => x.OpeningBusinessUnit).HasMaxLength(255);
             entity.Property(x => x.TaxonomyLevel1).HasMaxLength(500);
             entity.Property(x => x.TaxonomyLevel2).HasMaxLength(500);
             entity.Property(x => x.TaxonomyLevel3).HasMaxLength(500);
@@ -64,9 +67,11 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.Property(x => x.TaxonomyDescription).HasMaxLength(1000);
             entity.HasIndex(x => x.AccountSalesforceId);
             entity.HasIndex(x => new { x.EconomicGroup, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.SalesforceCreatedAt, x.EconomicGroup });
             entity.HasIndex(x => new { x.Brand, x.SalesforceCreatedAt });
             entity.HasIndex(x => new { x.Product, x.SalesforceCreatedAt });
             entity.HasIndex(x => new { x.OpeningVertical, x.SalesforceCreatedAt });
+            entity.HasIndex(x => new { x.OpeningBusinessUnit, x.SalesforceCreatedAt });
             entity.HasIndex(x => new { x.JiraIssueCode, x.SalesforceCreatedAt });
         });
 

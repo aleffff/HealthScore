@@ -28,7 +28,7 @@ services:
       Salesforce__ClientSecret: ${SALESFORCE_CLIENT_SECRET}
       Salesforce__ApiVersion: ${SALESFORCE_API_VERSION:-v63.0}
       Sync__IntervalMinutes: ${SYNC_INTERVAL_MINUTES:-60}
-      Sync__InitialLookbackDays: ${SYNC_INITIAL_LOOKBACK_DAYS:-730}
+      Sync__DataStartUtc: ${SYNC_DATA_START_UTC:-2026-01-01T00:00:00Z}
       Sync__WatermarkOverlapMinutes: ${SYNC_WATERMARK_OVERLAP_MINUTES:-5}
       Auth__Mode: ${AUTH_MODE:-local}
       Auth__Authority: ${AUTH_AUTHORITY:-}

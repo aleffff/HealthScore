@@ -242,6 +242,7 @@ Concluído:
 - filtros de marca, produto, escopo/vertical e Issue/JIRA com recálculo do benchmark e exportação;
 - identidade real de grupos por união de conta pai e raiz de CNPJ validado, com rastreabilidade do grupo originalmente reportado;
 - página de auditoria por grupo com memória de cálculo, evidências de agrupamento, chamados utilizados e detecção de anomalias;
+- rastreabilidade consolidada do score por chamado e fator, incluindo base histórica de crescimento e recorrência por taxonomia;
 - normalização temporal em UTC na API e uso de `FCR_Formula__c` como fonte oficial do indicador FCR;
 - presets de período para hoje, ontem, 7/15/30 dias e mês, com períodos diários delimitados em `America/Sao_Paulo`;
 - cache dos recortes analíticos, índices de consulta e testes unitários do motor, filtros e segurança.
@@ -325,7 +326,8 @@ Saída: SLOs aprovados, rollback testado e operação treinada.
 - Provedor de identidade corporativo e grupos que mapeiam para cada papel.
 - confirmar o campo oficial de conta ativa; a deduplicação usa CNPJ válido e raiz de oito dígitos;
 - Tratamento de `GrupoEconomico__c` nulo.
-- confirmar se haverá um campo corporativo específico de escopo; atualmente o filtro usa a vertical de abertura, pois o `describe` de `Case` não retornou campo de escopo;
+- os filtros usam `Case.Produto_Taxonomia__c` para produto, `Case.Segmento__c` para escopo/vertical e `Case.Unidade_de_Negocio_de_Abertura__c` para unidade de negócio;
+- a carga de chamados está limitada por `SYNC_DATA_START_UTC`, atualmente em `2026-01-01T00:00:00Z`;
 - Semântica exata do crescimento de 30/90 dias.
 - Calendário de feriados.
 - o benchmark filtrado foi definido como a média de densidade dos grupos elegíveis no próprio recorte;

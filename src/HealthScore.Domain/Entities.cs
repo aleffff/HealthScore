@@ -36,6 +36,7 @@ public sealed class CaseRecord
     public string? JiraIssueType { get; set; }
     public string? Product { get; set; }
     public string? OpeningVertical { get; set; }
+    public string? OpeningBusinessUnit { get; set; }
     public string? TaxonomyLevel1 { get; set; }
     public string? TaxonomyLevel2 { get; set; }
     public string? TaxonomyLevel3 { get; set; }

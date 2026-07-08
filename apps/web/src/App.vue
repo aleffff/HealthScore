@@ -69,7 +69,7 @@ type ScoreConfiguration = {
 type Simulation = { groups: number; currentAverage: number; simulatedAverage: number; changedBands: number; distribution: Record<string, number> }
 type ActionPlanHistory = { id: number; eventType: string; changedBy: string; createdAt: string }
 type PeriodOption = { snapshotKind: string; periodStart: string; periodEndExclusive: string; groups: number }
-type FilterOptions = { brands: string[]; products: string[]; scopes: string[] }
+type FilterOptions = { brands: string[]; products: string[]; scopes: string[]; businessUnits: string[] }
 type OperationsOverview = {
   generatedAt: string
   ingestion: { accounts: number; cases: number; lastRuns: Array<{ id: number; entityName: string; status: string; startedAt: string; finishedAt?: string; recordsRead: number; recordsWritten: number; error?: string }> }
@@ -87,8 +87,9 @@ const riskBand = ref('')
 const brand = ref('')
 const product = ref('')
 const scope = ref('')
+const businessUnit = ref('')
 const issue = ref('')
-const filterOptions = ref<FilterOptions>({ brands: [], products: [], scopes: [] })
+const filterOptions = ref<FilterOptions>({ brands: [], products: [], scopes: [], businessUnits: [] })
 const analysisWeights = ref({ density: 25, growth: 15, sla: 15, fcr: 10, criticality: 15, issue: 10, recurrence: 10 })
 const search = ref('')
 const appliedSearch = ref('')
@@ -131,7 +132,7 @@ const periodLabel = computed(() => {
   const start = new Date(`${summary.value.periodStart}T00:00:00`)
   return `${formatDate(start)} — ${formatDate(end)}`
 })
-const hasAnalyticalFilter = computed(() => Boolean(brand.value || product.value || scope.value || issue.value))
+const hasAnalyticalFilter = computed(() => Boolean(brand.value || product.value || scope.value || businessUnit.value || issue.value))
 const usesDynamicAnalysis = computed(() => hasAnalyticalFilter.value || ['today', 'yesterday', 'last7', 'last15'].includes(selectedPeriod.value))
 const availableMonths = computed(() => periods.value.filter(item => item.snapshotKind === 'monthly'))
 
@@ -149,6 +150,7 @@ function periodParams() {
   if (brand.value) params.set('brand', brand.value)
   if (product.value) params.set('product', product.value)
   if (scope.value) params.set('scope', scope.value)
+  if (businessUnit.value) params.set('businessUnit', businessUnit.value)
   if (issue.value) params.set('issue', issue.value)
   return params
 }
@@ -414,7 +416,7 @@ watch(riskBand, () => {
   loadAnalysis()
 })
 
-watch([brand, product, scope, issue], () => {
+watch([brand, product, scope, businessUnit, issue], () => {
   page.value = 1
   selected.value = null
   loadAnalysis()
@@ -534,6 +536,10 @@ onMounted(async () => {
             <select v-model="scope"><option value="">Todos</option><option v-for="item in filterOptions.scopes" :key="item">{{ item }}</option></select>
           </label>
           <label>
+            <span>Unidade de negócio</span>
+            <select v-model="businessUnit"><option value="">Todas</option><option v-for="item in filterOptions.businessUnits" :key="item">{{ item }}</option></select>
+          </label>
+          <label>
             <span>Issue/JIRA</span>
             <select v-model="issue"><option value="">Todos</option><option value="with">Com issue</option><option value="without">Sem issue</option></select>
           </label>
@@ -579,7 +585,7 @@ onMounted(async () => {
           <h2>{{ displayGroup(selected.economicGroup) }}</h2>
           <div class="drawer-score"><span class="score large" :class="scoreClass(selected.score)">{{ selected.score }}</span><div><strong>{{ selected.riskBand }}</strong><small>Principal motivo: {{ selected.mainReason }}</small></div></div>
           <div class="action-callout"><span>Ação sugerida</span><p>{{ selected.suggestedAction }}</p></div>
-          <a v-if="!usesDynamicAnalysis" class="audit-cta" :href="`/audit?group=${selected.id}`">Abrir conferência completa →</a>
+          <a class="audit-cta" :href="`/audit?group=${selected.id}`">Abrir conferência completa →</a>
           <div class="action-plan-form">
             <div class="action-plan-heading"><h3>Tratativa operacional</h3><span v-if="actionHistory.length">{{ actionHistory.length }} alterações</span></div>
             <div class="action-plan-fields">
