@@ -1,0 +1,74 @@
+services:
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-healthscore}
+      MARIADB_USER: ${MARIADB_USER:-healthscore}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?configure MARIADB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?configure MARIADB_ROOT_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/HealthScore.Worker/Dockerfile
+    environment: &app_environment
+      ConnectionStrings__MariaDb: Server=db;Port=3306;Database=${MARIADB_DATABASE:-healthscore};User=${MARIADB_USER:-healthscore};Password=${MARIADB_PASSWORD}
+      Salesforce__LoginUrl: ${SALESFORCE_LOGIN_URL}
+      Salesforce__ClientId: ${SALESFORCE_CLIENT_ID}
+      Salesforce__ClientSecret: ${SALESFORCE_CLIENT_SECRET}
+      Salesforce__ApiVersion: ${SALESFORCE_API_VERSION:-v63.0}
+      Sync__IntervalMinutes: ${SYNC_INTERVAL_MINUTES:-60}
+      Sync__InitialLookbackDays: ${SYNC_INITIAL_LOOKBACK_DAYS:-730}
+      Sync__WatermarkOverlapMinutes: ${SYNC_WATERMARK_OVERLAP_MINUTES:-5}
+      Auth__Mode: ${AUTH_MODE:-local}
+      Auth__Authority: ${AUTH_AUTHORITY:-}
+      Auth__Audience: ${AUTH_AUDIENCE:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: src/HealthScore.Api/Dockerfile
+    environment:
+      <<: *app_environment
+      ASPNETCORE_ENVIRONMENT: Production
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "127.0.0.1:5173:8080"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:
