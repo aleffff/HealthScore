@@ -7,6 +7,9 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
 {
     public DbSet<AccountRecord> Accounts => Set<AccountRecord>();
     public DbSet<CaseRecord> Cases => Set<CaseRecord>();
+    public DbSet<ProductPortfolioHistory> ProductPortfolioHistories => Set<ProductPortfolioHistory>();
+    public DbSet<ProductMapping> ProductMappings => Set<ProductMapping>();
+    public DbSet<BusinessUnitControl> BusinessUnitControls => Set<BusinessUnitControl>();
     public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
     public DbSet<EconomicGroup> EconomicGroups => Set<EconomicGroup>();
@@ -73,6 +76,46 @@ public sealed class HealthScoreDbContext(DbContextOptions<HealthScoreDbContext> 
             entity.HasIndex(x => new { x.OpeningVertical, x.SalesforceCreatedAt });
             entity.HasIndex(x => new { x.OpeningBusinessUnit, x.SalesforceCreatedAt });
             entity.HasIndex(x => new { x.JiraIssueCode, x.SalesforceCreatedAt });
+        });
+
+        modelBuilder.Entity<ProductPortfolioHistory>(entity =>
+        {
+            entity.ToTable("product_portfolio_history");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Product).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.UpdatedBy).HasMaxLength(200).IsRequired();
+            entity.HasIndex(x => new { x.Product, x.ReferenceMonth }).IsUnique();
+        });
+
+        modelBuilder.Entity<ProductMapping>(entity =>
+        {
+            entity.ToTable("product_mappings");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Vertical).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.StandardProduct).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.SourceSystem).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.SourceValue).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.CommercialProduct).HasMaxLength(255);
+            entity.Property(x => x.UpdatedBy).HasMaxLength(200).IsRequired();
+            entity.HasIndex(x => new { x.SourceSystem, x.SourceValue }).IsUnique();
+            entity.HasIndex(x => x.StandardProduct);
+            entity.HasIndex(x => x.Vertical);
+        });
+
+        modelBuilder.Entity<BusinessUnitControl>(entity =>
+        {
+            entity.ToTable("business_unit_controls");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.BusinessUnit).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.Vertical).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Product).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.Scope).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.UpdatedBy).HasMaxLength(200).IsRequired();
+            entity.HasIndex(x => x.BusinessUnit);
+            entity.HasIndex(x => new { x.BusinessUnit, x.Vertical, x.Product, x.Scope }).IsUnique();
+            entity.HasIndex(x => x.Vertical);
+            entity.HasIndex(x => x.Product);
+            entity.HasIndex(x => x.Scope);
         });
 
         modelBuilder.Entity<SyncWatermark>(entity =>

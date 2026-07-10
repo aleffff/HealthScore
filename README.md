@@ -40,9 +40,12 @@ URLs locais:
 - validação dos dígitos verificadores do CNPJ antes de utilizar sua raiz de oito dígitos;
 - grupo informado pelo Salesforce preservado separadamente para auditoria e nomeação;
 - chamados reassociados ao grupo resolvido por meio do `AccountId`;
+- de-para interno de produtos importado de `_de-para_produto_.xlsx`; o valor bruto vindo do Salesforce é preservado em `cases`, e o de-para é aplicado apenas nos filtros, cálculos e cadastros de carteira;
 - grupos econômicos e quantidade materializada de lojas ativas;
 - calendário de dias úteis de segunda a sexta;
-- densidade por grupo e benchmark médio da carteira;
+- densidade por grupo e benchmark da carteira por produto: chamados da carteira ÷ (lojas ativas cadastradas × dias úteis);
+- seed inicial de lojas ativas importado de `qtde_lojas_ativas.csv` para todos os produtos encontrados no de-para interno e no CSV, com histórico mensal de jan/2025 a jul/2026;
+- o agregado financeiro `SELLER/MPC` é semeado em `SELLER` e `EMPÓRIO`, porque o de-para indica `MPC` como alias Salesforce de `EMPÓRIO`; `CROSS` não é semeado como produto por não existir como produto padronizado no de-para;
 - crescimento recente 30/90 dias;
 - SLA violado, FCR, Issue/JIRA e criticidade;
 - FCR obtido do campo calculado oficial `FCR_Formula__c`;
@@ -283,6 +286,9 @@ Datas do Salesforce e do MariaDB são armazenadas em UTC. A API sempre serializa
 
 - `GET /health/live`
 - `GET /health/ready`
+- `GET /api/v1/public/score-methodology` (público, sem dados de clientes)
+- `GET /api/v1/product-portfolios`
+- `PUT /api/v1/product-portfolios` (`ScoreAdmin`)
 - `GET /api/v1/session`
 - `GET /api/v1/operations/overview`
 - `GET /api/v1/risk-score/periods`
@@ -301,3 +307,5 @@ Datas do Salesforce e do MariaDB são armazenadas em UTC. A API sempre serializa
 - `POST /api/v1/score-config/publish`
 
 O plano técnico completo está em [docs/PLANO_DESENVOLVIMENTO.md](docs/PLANO_DESENVOLVIMENTO.md).
+
+A metodologia pública fica disponível em `/documentation`, com fontes, fórmulas, faixas e pesos vigentes de cada composição.

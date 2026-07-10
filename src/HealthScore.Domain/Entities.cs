@@ -55,6 +55,39 @@ public sealed class SyncWatermark
     public DateTime UpdatedAt { get; set; }
 }
 
+public sealed class ProductPortfolioHistory
+{
+    public long Id { get; set; }
+    public required string Product { get; set; }
+    public DateOnly ReferenceMonth { get; set; }
+    public int ActiveStores { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public required string UpdatedBy { get; set; }
+}
+
+public sealed class ProductMapping
+{
+    public long Id { get; set; }
+    public required string Vertical { get; set; }
+    public required string StandardProduct { get; set; }
+    public required string SourceSystem { get; set; }
+    public required string SourceValue { get; set; }
+    public string? CommercialProduct { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public required string UpdatedBy { get; set; }
+}
+
+public sealed class BusinessUnitControl
+{
+    public long Id { get; set; }
+    public required string BusinessUnit { get; set; }
+    public required string Vertical { get; set; }
+    public required string Product { get; set; }
+    public required string Scope { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public required string UpdatedBy { get; set; }
+}
+
 public sealed class SyncRun
 {
     public long Id { get; set; }

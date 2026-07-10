@@ -97,6 +97,11 @@ Tabelas principais:
 
 - `accounts`: uma linha por Account; Salesforce Id, CNPJ normalizado, nome, marca, grupo, ativo e timestamps de origem.
 - `economic_groups`: chave interna estável, nome normalizado e quantidade materializada de lojas ativas distintas.
+- `product_mappings`: de-para interno importado de `_de-para_produto_.xlsx`, com produto padronizado, vertical, origem do alias e valor de origem. Não sobrescreve o produto bruto salvo em `cases`.
+- `business_unit_controls`: lista controlada de unidades de negócio, vertical, produto e escopo da aba `Unidades de negocio`; usada para exibir filtros controlados no front.
+- `product_portfolio_history`: histórico mensal de lojas ativas por produto padronizado, semeado a partir de `qtde_lojas_ativas.csv`.
+  - O agregado `SELLER/MPC` da base financeira é aplicado em `SELLER` e `EMPÓRIO`, pois a planilha define `MPC` como alias Salesforce de `EMPÓRIO`.
+  - `CROSS` aparece na base financeira como agrupador/vertical, mas não é tratado como produto por não existir como produto padronizado no de-para.
 - `cases`: uma linha por Case; conta, datas, status, prioridade, flags, JIRA, produto, vertical, escopo, taxonomia e TMS.
 - `business_calendar`: data, competência e indicador de dia útil. Deve suportar feriados relevantes à operação.
 - `group_period_metrics`: métricas agregadas por grupo, período e dimensões-base.
@@ -130,7 +135,7 @@ Fatores e pesos iniciais:
 Regras centrais:
 
 - `densidade = chamados / (lojas_ativas_distintas × dias_uteis)`;
-- benchmark = média simples da densidade dos grupos com chamados no mesmo recorte;
+- benchmark = total de chamados da carteira do produto padronizado no recorte ÷ (lojas ativas mensais cadastradas para o produto padronizado × dias úteis);
 - o filtro de grupo não deve reduzir o universo usado pelo benchmark;
 - `crescimento = chamados_30d / (chamados_90d / 3) - 1`;
 - recorrência = novo chamado do mesmo grupo e tema dentro de 30 dias; o primeiro evento da sequência não conta;
@@ -239,7 +244,7 @@ Concluído:
 - motor de score, snapshots móveis e mensais, ranking, resumo, drill-down e planos de ação;
 - calibragem com simulação, publicação versionada e recálculo;
 - autenticação OIDC/JWT, PKCE no frontend, autorização por papéis e auditoria pelo usuário autenticado;
-- filtros de marca, produto, escopo/vertical e Issue/JIRA com recálculo do benchmark e exportação;
+- produto obrigatório, filtros de escopo/vertical, unidade de negócio e Issue/JIRA com recálculo do benchmark e exportação;
 - identidade real de grupos por união de conta pai e raiz de CNPJ validado, com rastreabilidade do grupo originalmente reportado;
 - página de auditoria por grupo com memória de cálculo, evidências de agrupamento, chamados utilizados e detecção de anomalias;
 - rastreabilidade consolidada do score por chamado e fator, incluindo base histórica de crescimento e recorrência por taxonomia;
@@ -330,7 +335,7 @@ Saída: SLOs aprovados, rollback testado e operação treinada.
 - a carga de chamados está limitada por `SYNC_DATA_START_UTC`, atualmente em `2026-01-01T00:00:00Z`;
 - Semântica exata do crescimento de 30/90 dias.
 - Calendário de feriados.
-- o benchmark filtrado foi definido como a média de densidade dos grupos elegíveis no próprio recorte;
+- o benchmark usa a carteira do produto; a quantidade de lojas ativas é mantida manualmente por produto e mês com histórico;
 - Política para recalcular histórico após publicar nova regra.
 - Meta de atualização e SLOs de página/job.
 

@@ -24,6 +24,7 @@ public static class DependencyInjection
         services.AddScoped<IFarmaSyncService, FarmaSyncService>();
         services.AddScoped<IAnalyticsService, AnalyticsService>();
         services.AddScoped<AccountGroupResolver>();
+        services.AddScoped<ProductNormalizer>();
         services.AddMemoryCache();
         services.AddScoped<FilteredAnalyticsService>();
         return services;

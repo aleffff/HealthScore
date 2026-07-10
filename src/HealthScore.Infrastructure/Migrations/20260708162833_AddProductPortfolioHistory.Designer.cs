@@ -4,6 +4,7 @@ using HealthScore.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace HealthScore.Infrastructure.Migrations
 {
     [DbContext(typeof(HealthScoreDbContext))]
-    partial class HealthScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260708162833_AddProductPortfolioHistory")]
+    partial class AddProductPortfolioHistory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -198,58 +201,6 @@ namespace HealthScore.Infrastructure.Migrations
                     b.HasKey("Date");
 
                     b.ToTable("business_calendar", (string)null);
-                });
-
-            modelBuilder.Entity("HealthScore.Domain.BusinessUnitControl", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BusinessUnit")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<string>("Product")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<string>("Scope")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("UpdatedBy")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)");
-
-                    b.Property<string>("Vertical")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BusinessUnit");
-
-                    b.HasIndex("BusinessUnit", "Vertical", "Product", "Scope")
-                        .IsUnique();
-
-                    b.HasIndex("Product");
-
-                    b.HasIndex("Scope");
-
-                    b.HasIndex("Vertical");
-
-                    b.ToTable("business_unit_controls", (string)null);
                 });
 
             modelBuilder.Entity("HealthScore.Domain.CaseRecord", b =>
@@ -521,58 +472,6 @@ namespace HealthScore.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("group_score_snapshots", (string)null);
-                });
-
-            modelBuilder.Entity("HealthScore.Domain.ProductMapping", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("CommercialProduct")
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<string>("SourceSystem")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<string>("SourceValue")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<string>("StandardProduct")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("UpdatedBy")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)");
-
-                    b.Property<string>("Vertical")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StandardProduct");
-
-                    b.HasIndex("Vertical");
-
-                    b.HasIndex("SourceSystem", "SourceValue")
-                        .IsUnique();
-
-                    b.ToTable("product_mappings", (string)null);
                 });
 
             modelBuilder.Entity("HealthScore.Domain.ProductPortfolioHistory", b =>

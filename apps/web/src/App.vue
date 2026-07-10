@@ -2,9 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch, authenticatedUser, initializeAuth, isAuthenticated, login, logout } from './auth'
 import AuditPage from './AuditPage.vue'
+import DocumentationPage from './DocumentationPage.vue'
 
 const fetch = apiFetch
 const auditMode = window.location.pathname.startsWith('/audit')
+const documentationMode = window.location.pathname.startsWith('/documentation')
 
 type Summary = {
   available: boolean
@@ -69,7 +71,9 @@ type ScoreConfiguration = {
 type Simulation = { groups: number; currentAverage: number; simulatedAverage: number; changedBands: number; distribution: Record<string, number> }
 type ActionPlanHistory = { id: number; eventType: string; changedBy: string; createdAt: string }
 type PeriodOption = { snapshotKind: string; periodStart: string; periodEndExclusive: string; groups: number }
-type FilterOptions = { brands: string[]; products: string[]; scopes: string[]; businessUnits: string[] }
+type FilterOptions = { products: string[]; scopes: string[]; businessUnits: string[] }
+type ProductPortfolio = { id: number; product: string; referenceMonth: string; activeStores: number; updatedAt: string; updatedBy: string }
+type PersistedFilters = { period?: string; riskBand?: string; product?: string; scope?: string; businessUnit?: string; issue?: string; search?: string }
 type OperationsOverview = {
   generatedAt: string
   ingestion: { accounts: number; cases: number; lastRuns: Array<{ id: number; entityName: string; status: string; startedAt: string; finishedAt?: string; recordsRead: number; recordsWritten: number; error?: string }> }
@@ -78,23 +82,30 @@ type OperationsOverview = {
   actionPlans: Array<{ status: string; total: number }>
 }
 
+const filterStorageKey = 'healthscore:ranking-filters:v1'
+function loadPersistedFilters(): PersistedFilters {
+  try { return JSON.parse(localStorage.getItem(filterStorageKey) ?? '{}') as PersistedFilters }
+  catch { return {} }
+}
+const persistedFilters = loadPersistedFilters()
+
 const summary = ref<Summary | null>(null)
 const groups = ref<GroupRow[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 25
-const riskBand = ref('')
-const brand = ref('')
-const product = ref('')
-const scope = ref('')
-const businessUnit = ref('')
-const issue = ref('')
-const filterOptions = ref<FilterOptions>({ brands: [], products: [], scopes: [], businessUnits: [] })
+const riskBand = ref(persistedFilters.riskBand ?? '')
+const product = ref(persistedFilters.product ?? '')
+const scope = ref(persistedFilters.scope ?? '')
+const businessUnit = ref(persistedFilters.businessUnit ?? '')
+const issue = ref(persistedFilters.issue ?? '')
+const filterOptions = ref<FilterOptions>({ products: [], scopes: [], businessUnits: [] })
 const analysisWeights = ref({ density: 25, growth: 15, sla: 15, fcr: 10, criticality: 15, issue: 10, recurrence: 10 })
-const search = ref('')
-const appliedSearch = ref('')
+const search = ref(persistedFilters.search ?? '')
+const appliedSearch = ref(persistedFilters.search?.trim() ?? '')
 const loading = ref(true)
 const error = ref('')
+const analysisNotice = ref('')
 const selected = ref<GroupDetail | null>(null)
 const detailLoading = ref(false)
 const evolution = ref<EvolutionItem[]>([])
@@ -114,11 +125,19 @@ const actionHistory = ref<ActionPlanHistory[]>([])
 const actionSaving = ref(false)
 const actionMessage = ref('')
 const periods = ref<PeriodOption[]>([])
-const selectedPeriod = ref('last30')
+const selectedPeriod = ref(persistedFilters.period ?? 'last30')
 const exporting = ref(false)
 const operationsOpen = ref(false)
 const operationsLoading = ref(false)
 const operations = ref<OperationsOverview | null>(null)
+const portfoliosOpen = ref(false)
+const portfoliosLoading = ref(false)
+const portfolioSaving = ref(false)
+const portfolioRows = ref<ProductPortfolio[]>([])
+const portfolioProduct = ref('')
+const portfolioMonth = ref(new Date().toISOString().slice(0, 7))
+const portfolioActiveStores = ref<number | null>(null)
+const portfolioMessage = ref('')
 const authReady = ref(false)
 const loggedIn = ref(false)
 const userName = ref('')
@@ -132,8 +151,7 @@ const periodLabel = computed(() => {
   const start = new Date(`${summary.value.periodStart}T00:00:00`)
   return `${formatDate(start)} — ${formatDate(end)}`
 })
-const hasAnalyticalFilter = computed(() => Boolean(brand.value || product.value || scope.value || businessUnit.value || issue.value))
-const usesDynamicAnalysis = computed(() => hasAnalyticalFilter.value || ['today', 'yesterday', 'last7', 'last15'].includes(selectedPeriod.value))
+const usesDynamicAnalysis = computed(() => true)
 const availableMonths = computed(() => periods.value.filter(item => item.snapshotKind === 'monthly'))
 
 function periodParams() {
@@ -147,7 +165,6 @@ function periodParams() {
     params.set('snapshotKind', 'rolling30')
     if (rolling) params.set('periodStart', rolling.periodStart)
   }
-  if (brand.value) params.set('brand', brand.value)
   if (product.value) params.set('product', product.value)
   if (scope.value) params.set('scope', scope.value)
   if (businessUnit.value) params.set('businessUnit', businessUnit.value)
@@ -174,6 +191,7 @@ async function loadPeriods() {
 async function loadAnalysis() {
   loading.value = true
   error.value = ''
+  analysisNotice.value = ''
   try {
     const params = periodParams()
     params.set('page', String(page.value)); params.set('pageSize', String(pageSize))
@@ -183,6 +201,11 @@ async function loadAnalysis() {
       const response = await fetch(`/api/v1/risk-score/analysis?${params}`)
       if (!response.ok) throw new Error('Não foi possível carregar a análise.')
       const data = await response.json()
+      if (!data.available) {
+        summary.value = null; groups.value = []; total.value = 0
+        analysisNotice.value = data.message ?? 'Selecione um produto para calcular o ranking.'
+        return
+      }
       if (data.weights) analysisWeights.value = data.weights
       summary.value = data.summary ?? null; groups.value = data.items ?? []; total.value = data.total ?? 0
     } else {
@@ -199,6 +222,41 @@ async function loadAnalysis() {
   } finally {
     loading.value = false
   }
+}
+
+async function openPortfolios() {
+  portfoliosOpen.value = true
+  portfolioProduct.value = product.value
+  if (selectedPeriod.value.startsWith('month:')) portfolioMonth.value = selectedPeriod.value.slice(6, 13)
+  await loadPortfolios()
+}
+
+async function loadPortfolios() {
+  portfoliosLoading.value = true
+  try {
+    const params = portfolioProduct.value ? `?product=${encodeURIComponent(portfolioProduct.value)}` : ''
+    const response = await fetch(`/api/v1/product-portfolios${params}`)
+    if (!response.ok) throw new Error('Não foi possível consultar as carteiras.')
+    portfolioRows.value = await response.json()
+  } catch (reason) { portfolioMessage.value = reason instanceof Error ? reason.message : 'Erro inesperado.' }
+  finally { portfoliosLoading.value = false }
+}
+
+async function savePortfolio() {
+  if (!portfolioProduct.value || !portfolioMonth.value || !portfolioActiveStores.value) return
+  portfolioSaving.value = true; portfolioMessage.value = ''
+  try {
+    const response = await fetch('/api/v1/product-portfolios', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product: portfolioProduct.value, referenceMonth: `${portfolioMonth.value}-01`, activeStores: portfolioActiveStores.value })
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error ?? 'Não foi possível salvar a carteira.')
+    portfolioMessage.value = 'Quantidade de lojas salva.'; portfolioActiveStores.value = null
+    await loadPortfolios()
+    if (product.value === portfolioProduct.value) await loadAnalysis()
+  } catch (reason) { portfolioMessage.value = reason instanceof Error ? reason.message : 'Erro inesperado.' }
+  finally { portfolioSaving.value = false }
 }
 
 async function changePeriod() {
@@ -416,14 +474,24 @@ watch(riskBand, () => {
   loadAnalysis()
 })
 
-watch([brand, product, scope, businessUnit, issue], () => {
+watch([product, scope, businessUnit, issue], () => {
   page.value = 1
   selected.value = null
   loadAnalysis()
 })
 
+watch([selectedPeriod, riskBand, product, scope, businessUnit, issue, appliedSearch], () => {
+  try {
+    localStorage.setItem(filterStorageKey, JSON.stringify({
+      period: selectedPeriod.value, riskBand: riskBand.value, product: product.value,
+      scope: scope.value, businessUnit: businessUnit.value, issue: issue.value, search: appliedSearch.value
+    }))
+  } catch { /* O dashboard continua funcional quando o armazenamento estiver indisponível. */ }
+})
+
 onMounted(async () => {
   try {
+    if (documentationMode) return
     await initializeAuth()
     authReady.value = true
     loggedIn.value = isAuthenticated()
@@ -439,8 +507,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="!authReady" class="auth-screen">Carregando autenticação…</div>
-  <div v-else-if="!loggedIn" class="auth-screen"><h1>HealthScore</h1><p>Entre com sua conta corporativa para continuar.</p><button @click="login">Entrar</button></div>
+  <DocumentationPage v-if="documentationMode" />
+  <div v-else-if="!authReady" class="auth-screen">Carregando autenticação…</div>
+  <div v-else-if="!loggedIn" class="auth-screen"><h1>HealthScore</h1><p>Entre com sua conta corporativa para continuar.</p><button @click="login">Entrar</button><a href="/documentation">Consultar metodologia pública</a></div>
   <AuditPage v-else-if="auditMode" />
   <div v-else class="app-shell">
     <header class="topbar">
@@ -450,7 +519,9 @@ onMounted(async () => {
         <span>Inteligência operacional</span>
       </div>
       <button class="operations-link" @click="openOperations">Operação</button>
+      <button class="operations-link" @click="openPortfolios">Carteiras</button>
       <a class="audit-link" href="/audit">Conferência</a>
+      <a class="audit-link" href="/documentation">Metodologia</a>
       <button class="calibration-link" @click="openCalibration">Calibragem</button>
       <span class="user-name">{{ userName }}</span>
       <button class="logout-link" @click="logout">Sair</button>
@@ -524,12 +595,8 @@ onMounted(async () => {
             </select>
           </label>
           <label>
-            <span>Marca</span>
-            <select v-model="brand"><option value="">Todas</option><option v-for="item in filterOptions.brands" :key="item">{{ item }}</option></select>
-          </label>
-          <label>
             <span>Produto</span>
-            <select v-model="product"><option value="">Todos</option><option v-for="item in filterOptions.products" :key="item">{{ item }}</option></select>
+            <select v-model="product" required><option value="">Selecione um produto</option><option v-for="item in filterOptions.products" :key="item">{{ item }}</option></select>
           </label>
           <label>
             <span>Escopo / vertical</span>
@@ -546,6 +613,7 @@ onMounted(async () => {
         </div>
 
         <div v-if="error" class="error-state">{{ error }}</div>
+        <div v-if="analysisNotice" class="analysis-notice"><span>{{ analysisNotice }}</span><button v-if="product" @click="openPortfolios">Cadastrar lojas da carteira</button></div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -606,7 +674,7 @@ onMounted(async () => {
           <div class="indicator-grid">
             <div><span>Chamados</span><strong>{{ integer(selected.metrics.totalCases) }}</strong></div>
             <div><span>Lojas ativas</span><strong>{{ integer(selected.metrics.activeStores) }}</strong></div>
-            <div><span>Densidade vs. média</span><strong>{{ decimal(selected.metrics.densityVsAverage) }}×</strong></div>
+            <div><span>Densidade vs. carteira</span><strong>{{ decimal(selected.metrics.densityVsAverage) }}×</strong></div>
             <div><span>Recorrência</span><strong>{{ pct(selected.metrics.recurrenceRate) }}</strong></div>
             <div><span>Issue/JIRA</span><strong>{{ pct(selected.metrics.issueRate) }}</strong></div>
             <div><span>Criticidade</span><strong>{{ pct(selected.metrics.criticalRate) }}</strong></div>
@@ -725,6 +793,22 @@ onMounted(async () => {
           </div>
           <p class="operations-footnote">Snapshot atualizado em {{ operations.analytics.lastSnapshot ? new Date(operations.analytics.lastSnapshot).toLocaleString('pt-BR') : '—' }} · regra publicada por {{ operations.analytics.activeRule.createdBy }}</p>
         </template>
+      </section>
+    </div>
+
+    <div v-if="portfoliosOpen" class="modal-backdrop" @click.self="portfoliosOpen = false">
+      <section class="portfolio-modal">
+        <button class="close" @click="portfoliosOpen = false" aria-label="Fechar carteiras">×</button>
+        <p class="eyebrow">BASE FINANCEIRA</p><h2>Lojas ativas por produto</h2>
+        <p class="modal-intro">Informe a quantidade mensal de lojas ativas da carteira. O valor fica preservado historicamente e compõe o benchmark de densidade.</p>
+        <div class="portfolio-form">
+          <label><span>Produto</span><select v-model="portfolioProduct" @change="loadPortfolios"><option value="">Selecione</option><option v-for="item in filterOptions.products" :key="item">{{ item }}</option></select></label>
+          <label><span>Mês de referência</span><input v-model="portfolioMonth" type="month" /></label>
+          <label><span>Lojas ativas</span><input v-model.number="portfolioActiveStores" type="number" min="1" step="1" placeholder="Ex.: 1250" /></label>
+          <button :disabled="!portfolioProduct || !portfolioMonth || !portfolioActiveStores || portfolioSaving" @click="savePortfolio">{{ portfolioSaving ? 'Salvando…' : 'Salvar' }}</button>
+        </div>
+        <p v-if="portfolioMessage" class="portfolio-message">{{ portfolioMessage }}</p>
+        <div class="portfolio-history"><div class="portfolio-history-head"><strong>Histórico</strong><span>{{ portfolioRows.length }} registros</span></div><p v-if="portfoliosLoading">Carregando…</p><table v-else><thead><tr><th>Produto</th><th>Referência</th><th>Lojas ativas</th><th>Atualizado por</th></tr></thead><tbody><tr v-for="row in portfolioRows" :key="row.id"><td>{{ row.product }}</td><td>{{ new Date(`${row.referenceMonth}T00:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) }}</td><td>{{ integer(row.activeStores) }}</td><td>{{ row.updatedBy }}<small>{{ new Date(row.updatedAt).toLocaleString('pt-BR') }}</small></td></tr><tr v-if="!portfolioRows.length"><td colspan="4">Nenhum valor cadastrado.</td></tr></tbody></table></div>
       </section>
     </div>
   </div>

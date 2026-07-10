@@ -26,6 +26,8 @@ public static class InitialScoreRules
     public static int CriticalPoints(decimal value) => value <= .05m ? 0 : value <= .10m ? 5 : value <= .20m ? 10 : 15;
     public static int IssuePoints(decimal value) => value <= .03m ? 0 : value <= .08m ? 3 : value <= .15m ? 7 : 10;
     public static int RecurrencePoints(decimal value) => value <= .05m ? 0 : value <= .10m ? 5 : 10;
+    public static decimal PortfolioDensityBenchmark(int totalCases, int activeStores, int businessDays) =>
+        activeStores <= 0 || businessDays <= 0 ? 0 : (decimal)totalCases / (activeStores * businessDays);
     public static int Scale(int basePoints, int baseMaximum, int configuredWeight) =>
         (int)Math.Round((decimal)basePoints / baseMaximum * configuredWeight, MidpointRounding.AwayFromZero);
 

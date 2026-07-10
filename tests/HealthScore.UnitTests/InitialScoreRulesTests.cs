@@ -4,6 +4,16 @@ namespace HealthScore.UnitTests;
 
 public sealed class InitialScoreRulesTests
 {
+    [Fact]
+    public void Portfolio_density_benchmark_uses_total_cases_stores_and_business_days() =>
+        Assert.Equal(1m, InitialScoreRules.PortfolioDensityBenchmark(1000, 200, 5));
+
+    [Theory]
+    [InlineData(0, 5)]
+    [InlineData(10, 0)]
+    public void Portfolio_density_benchmark_is_zero_without_a_valid_denominator(int stores, int days) =>
+        Assert.Equal(0m, InitialScoreRules.PortfolioDensityBenchmark(100, stores, days));
+
     [Theory]
     [InlineData(1.00, 0)]
     [InlineData(1.01, 5)]

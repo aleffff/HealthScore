@@ -1,6 +1,7 @@
 using HealthScore.Application;
 using HealthScore.Api;
 using HealthScore.Infrastructure;
+using HealthScore.Domain;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Security.Claims;
@@ -27,6 +28,20 @@ app.MapGet("/api/v1/auth/config", (IConfiguration configuration) =>
 {
     var auth = configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
     return Results.Ok(new { mode = auth.Mode.ToLowerInvariant(), authority = auth.Authority, clientId = auth.ClientId, scope = auth.Scope });
+}).AllowAnonymous();
+
+app.MapGet("/api/v1/public/score-methodology", async (HealthScoreDbContext db, CancellationToken cancellationToken) =>
+{
+    var rule = await db.ScoreRuleVersions.AsNoTracking().Where(x => x.Status == "published")
+        .OrderByDescending(x => x.Id).Select(x => new { x.Id, x.Name, x.ConfigurationJson, x.PublishedAt })
+        .FirstOrDefaultAsync(cancellationToken);
+    var configuration = rule is null ? InitialScoreRules.Default : InitialScoreRules.Parse(rule.ConfigurationJson);
+    return Results.Ok(new
+    {
+        version = rule?.Id ?? InitialScoreRules.Version, name = rule?.Name ?? "Regra inicial v1", rule?.PublishedAt,
+        configuration.PeriodDays, configuration.RecurrenceWindowDays, configuration.CriticalPriorities,
+        configuration.Weights, configuration.Bands
+    });
 }).AllowAnonymous();
 
 app.MapGet("/api/v1/session", (ClaimsPrincipal user) => Results.Ok(new
@@ -120,6 +135,34 @@ app.MapGet("/api/v1/risk-score/periods", async (HealthScoreDbContext db, Cancell
 app.MapGet("/api/v1/risk-score/filters", async (FilteredAnalyticsService analytics, CancellationToken cancellationToken) =>
     Results.Ok(await analytics.GetOptionsAsync(cancellationToken))).RequireAuthorization("Viewer");
 
+app.MapGet("/api/v1/product-portfolios", async (string? product, ProductNormalizer productNormalizer, HealthScoreDbContext db, CancellationToken cancellationToken) =>
+{
+    var query = db.ProductPortfolioHistories.AsNoTracking();
+    var normalizedProduct = await productNormalizer.NormalizeAsync(product, cancellationToken);
+    if (!string.IsNullOrWhiteSpace(normalizedProduct)) query = query.Where(x => x.Product == normalizedProduct);
+    return Results.Ok(await query.OrderBy(x => x.Product).ThenByDescending(x => x.ReferenceMonth).ToListAsync(cancellationToken));
+}).RequireAuthorization("Viewer");
+
+app.MapPut("/api/v1/product-portfolios", async (SaveProductPortfolioRequest request, ClaimsPrincipal user, ProductNormalizer productNormalizer, HealthScoreDbContext db, CancellationToken cancellationToken) =>
+{
+    var product = await productNormalizer.NormalizeAsync(request.Product, cancellationToken);
+    if (product is null) return Results.BadRequest(new { error = "Produto é obrigatório." });
+    if (request.ReferenceMonth.Day != 1) return Results.BadRequest(new { error = "O mês de referência deve usar o primeiro dia do mês." });
+    if (request.ActiveStores <= 0) return Results.BadRequest(new { error = "A quantidade de lojas ativas deve ser maior que zero." });
+    var row = await db.ProductPortfolioHistories.SingleOrDefaultAsync(x => x.Product == product && x.ReferenceMonth == request.ReferenceMonth, cancellationToken);
+    if (row is null)
+    {
+        row = new ProductPortfolioHistory { Product = product, ReferenceMonth = request.ReferenceMonth, ActiveStores = request.ActiveStores, UpdatedAt = DateTime.UtcNow, UpdatedBy = user.Identity?.Name ?? "unknown" };
+        db.ProductPortfolioHistories.Add(row);
+    }
+    else
+    {
+        row.ActiveStores = request.ActiveStores; row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = user.Identity?.Name ?? "unknown";
+    }
+    await db.SaveChangesAsync(cancellationToken);
+    return Results.Ok(row);
+}).RequireAuthorization("ScoreAdmin");
+
 app.MapGet("/api/v1/risk-score/analysis", async (
     string? brand, string? product, string? scope, string? businessUnit, string? issue, string? riskBand, string? search,
     string? range, string? snapshotKind, DateOnly? periodStart, int? page, int? pageSize,
@@ -128,7 +171,10 @@ app.MapGet("/api/v1/risk-score/analysis", async (
     var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.Ok(new { available = false, items = Array.Empty<object>() });
     var configuration = InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson);
-    var calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), configuration, cancellationToken, period.Value.TimeZone);
+    IReadOnlyList<FilteredScoreRow> calculated;
+    try { calculated = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), configuration, cancellationToken, period.Value.TimeZone); }
+    catch (ProductRequiredException exception) { return Results.Ok(new { available = false, reason = "product_required", message = exception.Message, items = Array.Empty<object>() }); }
+    catch (ProductPortfolioNotConfiguredException exception) { return Results.Ok(new { available = false, reason = "portfolio_not_configured", message = exception.Message, product = exception.Product, referenceMonth = exception.ReferenceMonth, items = Array.Empty<object>() }); }
     var idQuery = db.GroupScoreSnapshots.AsNoTracking().Where(x => x.ScoreRuleVersionId == period.Value.Rule.Id);
     idQuery = period.Value.Dynamic
         ? idQuery.Where(x => x.SnapshotKind == "rolling30")
@@ -160,7 +206,9 @@ app.MapGet("/api/v1/risk-score/analysis/export", async (
 {
     var period = await ResolvePeriodAsync(db, range, snapshotKind, periodStart, cancellationToken);
     if (period is null) return Results.NotFound();
-    var rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken, period.Value.TimeZone);
+    IReadOnlyList<FilteredScoreRow> rows;
+    try { rows = await analytics.CalculateAsync(period.Value.Start, period.Value.End, new AnalyticsFilter(brand, product, scope, businessUnit, issue), InitialScoreRules.Parse(period.Value.Rule.ConfigurationJson), cancellationToken, period.Value.TimeZone); }
+    catch (InvalidOperationException exception) when (exception is ProductRequiredException or ProductPortfolioNotConfiguredException) { return Results.BadRequest(new { error = exception.Message }); }
     var filtered = rows.AsEnumerable();
     if (!string.IsNullOrWhiteSpace(riskBand)) filtered = filtered.Where(x => x.RiskBand == riskBand);
     if (!string.IsNullOrWhiteSpace(search)) filtered = filtered.Where(x => x.EconomicGroup.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -671,3 +719,4 @@ static async Task<(DateOnly Start, DateOnly End, string Kind, HealthScore.Domain
 
 sealed record PublishScoreConfigurationRequest(string Name, string CreatedBy, string Justification, ScoreConfiguration Configuration);
 sealed record SaveActionPlanRequest(string Status, string? Responsible, string? Notes, string? ChangedBy);
+sealed record SaveProductPortfolioRequest(string Product, DateOnly ReferenceMonth, int ActiveStores);

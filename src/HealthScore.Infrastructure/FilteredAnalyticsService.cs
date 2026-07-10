@@ -27,40 +27,63 @@ public sealed record FilteredScoreRow(
     public long Id { get; init; }
 }
 
-public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCache cache, IOptions<SyncOptions> syncOptions)
+public sealed class ProductRequiredException() : InvalidOperationException("Selecione um produto para calcular o score.");
+public sealed class ProductPortfolioNotConfiguredException(string product, DateOnly referenceMonth)
+    : InvalidOperationException($"A quantidade de lojas ativas de {product} não foi cadastrada para {referenceMonth:MM/yyyy}.")
+{
+    public string Product { get; } = product;
+    public DateOnly ReferenceMonth { get; } = referenceMonth;
+}
+
+public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCache cache, IOptions<SyncOptions> syncOptions, ProductNormalizer productNormalizer)
 {
     public async Task<FilterOptions> GetOptionsAsync(CancellationToken cancellationToken)
     {
-        if (cache.TryGetValue<FilterOptions>("analytics-filter-options", out var cached)) return cached!;
+        if (cache.TryGetValue<FilterOptions>("analytics-filter-options:v2", out var cached)) return cached!;
         var dataStartUtc = syncOptions.Value.DataStartUtc.Kind == DateTimeKind.Utc
             ? syncOptions.Value.DataStartUtc
             : DateTime.SpecifyKind(syncOptions.Value.DataStartUtc, DateTimeKind.Utc);
         var cases = db.Cases.Where(x => x.SalesforceCreatedAt >= dataStartUtc);
         var brands = await DistinctValues(cases.Select(x => x.Brand), cancellationToken);
-        var products = await DistinctValues(cases.Select(x => x.Product), cancellationToken);
-        var scopes = await DistinctValues(cases.Select(x => x.OpeningVertical), cancellationToken);
-        var businessUnits = await DistinctValues(cases.Select(x => x.OpeningBusinessUnit), cancellationToken);
+        var products = await DistinctValues(db.ProductMappings.Select(x => x.StandardProduct), cancellationToken);
+        var scopes = await DistinctValues(db.BusinessUnitControls.Select(x => x.Vertical), cancellationToken);
+        var businessUnits = await DistinctValues(db.BusinessUnitControls.Select(x => x.BusinessUnit), cancellationToken);
+        if (products.Count == 0) products = await DistinctValues(cases.Select(x => x.Product), cancellationToken);
+        if (scopes.Count == 0) scopes = await DistinctValues(cases.Select(x => x.OpeningVertical), cancellationToken);
+        if (businessUnits.Count == 0) businessUnits = await DistinctValues(cases.Select(x => x.OpeningBusinessUnit), cancellationToken);
         var result = new FilterOptions(brands, products, scopes, businessUnits);
-        cache.Set("analytics-filter-options", result, TimeSpan.FromMinutes(30));
+        var cacheDuration = products.Count == 0 || scopes.Count == 0 || businessUnits.Count == 0
+            ? TimeSpan.FromMinutes(1)
+            : TimeSpan.FromMinutes(30);
+        cache.Set("analytics-filter-options:v2", result, cacheDuration);
         return result;
     }
 
-    public Task<IReadOnlyList<FilteredScoreRow>> CalculateAsync(
+    public async Task<IReadOnlyList<FilteredScoreRow>> CalculateAsync(
         DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken,
         TimeZoneInfo? timeZone = null)
     {
+        if (filter.Product is null) throw new ProductRequiredException();
+        var productMap = await productNormalizer.LoadAsync(cancellationToken);
+        var normalizedProduct = productMap.Normalize(filter.Product) ?? throw new ProductRequiredException();
+        filter = new AnalyticsFilter(filter.Brand, normalizedProduct, filter.Scope, filter.BusinessUnit, filter.Issue);
+        var lastDay = end.AddDays(-1);
+        var referenceMonth = new DateOnly(lastDay.Year, lastDay.Month, 1);
+        var portfolio = await db.ProductPortfolioHistories.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Product == normalizedProduct && x.ReferenceMonth == referenceMonth, cancellationToken)
+            ?? throw new ProductPortfolioNotConfiguredException(normalizedProduct, referenceMonth);
         var configurationHash = InitialScoreRules.AsJson(configuration).GetHashCode(StringComparison.Ordinal);
-        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{timeZone?.Id}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.BusinessUnit}:{filter.Issue}:{configurationHash}";
-        return cache.GetOrCreateAsync(key, entry =>
+        var key = $"filtered-score:{start:yyyyMMdd}:{end:yyyyMMdd}:{timeZone?.Id}:{filter.Brand}:{filter.Product}:{filter.Scope}:{filter.BusinessUnit}:{filter.Issue}:{portfolio.ActiveStores}:{portfolio.UpdatedAt.Ticks}:{configurationHash}";
+        return (await cache.GetOrCreateAsync(key, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
             entry.Size = 1;
-            return CalculateCoreAsync(start, end, filter, configuration, cancellationToken, timeZone);
-        })!;
+            return CalculateCoreAsync(start, end, filter, productMap.SourceValuesFor(normalizedProduct), configuration, portfolio.ActiveStores, cancellationToken, timeZone);
+        }))!;
     }
 
     private async Task<IReadOnlyList<FilteredScoreRow>> CalculateCoreAsync(
-        DateOnly start, DateOnly end, AnalyticsFilter filter, ScoreConfiguration configuration, CancellationToken cancellationToken,
+        DateOnly start, DateOnly end, AnalyticsFilter filter, IReadOnlyList<string> productSourceValues, ScoreConfiguration configuration, int portfolioActiveStores, CancellationToken cancellationToken,
         TimeZoneInfo? timeZone)
     {
         var startLocal = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
@@ -75,28 +98,30 @@ public sealed class FilteredAnalyticsService(HealthScoreDbContext db, IMemoryCac
         var stores = await accountQuery.GroupBy(x => x.EconomicGroup!).Select(group => new { Group = group.Key, Count = group.Select(x => x.Cnpj).Distinct().Count() })
             .ToDictionaryAsync(x => x.Group, x => x.Count, cancellationToken);
 
-        var currentQuery = Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= startUtc && x.SalesforceCreatedAt < endUtc && x.EconomicGroup != null && x.EconomicGroup != ""), filter);
+        var portfolioQuery = Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= startUtc && x.SalesforceCreatedAt < endUtc), filter, productSourceValues);
+        var portfolioTotalCases = await portfolioQuery.CountAsync(cancellationToken);
+        var currentQuery = portfolioQuery.Where(x => x.EconomicGroup != null && x.EconomicGroup != "");
         var priorities = configuration.CriticalPriorities.ToArray();
         var current = await currentQuery.GroupBy(x => x.EconomicGroup!).Select(group => new RawMetric(
             group.Key, group.Count(), group.Count(x => x.SlaViolated == true), group.Count(x => x.FirstContactResolution == true),
             group.Count(x => x.JiraIssueCode != null && x.JiraIssueCode != ""), group.Count(x => x.Priority != null && priorities.Contains(x.Priority))))
             .ToListAsync(cancellationToken);
 
-        var historyQuery = Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= historyStart && x.SalesforceCreatedAt < endUtc && x.EconomicGroup != null && x.EconomicGroup != ""), filter);
+        var historyQuery = Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= historyStart && x.SalesforceCreatedAt < endUtc && x.EconomicGroup != null && x.EconomicGroup != ""), filter, productSourceValues);
         var totals90 = await historyQuery.GroupBy(x => x.EconomicGroup!).Select(group => new { Group = group.Key, Total = group.Count() })
             .ToDictionaryAsync(x => x.Group, x => x.Total, cancellationToken);
-        var recurrence = await RecurrenceAsync(Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= startUtc.AddDays(-30) && x.SalesforceCreatedAt < endUtc && x.EconomicGroup != null && x.EconomicGroup != ""), filter), startUtc, cancellationToken);
+        var recurrence = await RecurrenceAsync(Apply(db.Cases.AsNoTracking().Where(x => x.SalesforceCreatedAt >= startUtc.AddDays(-30) && x.SalesforceCreatedAt < endUtc && x.EconomicGroup != null && x.EconomicGroup != ""), filter, productSourceValues), startUtc, cancellationToken);
 
         var eligible = current.Where(x => stores.GetValueOrDefault(x.Group) > 0).ToList();
         var densities = eligible.ToDictionary(x => x.Group, x => Divide(x.Total, stores[x.Group] * businessDays));
-        var benchmark = densities.Count == 0 ? 0 : densities.Values.Average();
+        var benchmark = InitialScoreRules.PortfolioDensityBenchmark(portfolioTotalCases, portfolioActiveStores, businessDays);
         return eligible.Select(metric => Build(metric, stores[metric.Group], businessDays, benchmark, densities[metric.Group], totals90.GetValueOrDefault(metric.Group), recurrence.GetValueOrDefault(metric.Group), configuration)).ToList();
     }
 
-    private static IQueryable<CaseRecord> Apply(IQueryable<CaseRecord> query, AnalyticsFilter filter)
+    private static IQueryable<CaseRecord> Apply(IQueryable<CaseRecord> query, AnalyticsFilter filter, IReadOnlyList<string> productSourceValues)
     {
         if (filter.Brand is not null) query = query.Where(x => x.Brand == filter.Brand);
-        if (filter.Product is not null) query = query.Where(x => x.Product == filter.Product);
+        if (filter.Product is not null) query = query.Where(x => x.Product != null && productSourceValues.Contains(x.Product));
         if (filter.Scope is not null) query = query.Where(x => x.OpeningVertical == filter.Scope);
         if (filter.BusinessUnit is not null) query = query.Where(x => x.OpeningBusinessUnit == filter.BusinessUnit);
         if (filter.Issue == "with") query = query.Where(x => x.JiraIssueCode != null && x.JiraIssueCode != "");
